@@ -121,6 +121,10 @@ export function initLogger(): Logger {
 }
 
 export function log(message: string): void {
+  if (process.env["DEBUG"]) {
+    // eslint-disable-next-line no-console
+    console.log(`[DEBUG] ${message}`);
+  }
   (logger ?? initLogger()).log(message);
 }
 

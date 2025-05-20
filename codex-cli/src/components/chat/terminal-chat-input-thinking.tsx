@@ -11,10 +11,13 @@ export default function TerminalChatInputThinking({
   onInterrupt,
   active,
   thinkingSeconds,
+  description,
 }: {
   onInterrupt: () => void;
   active: boolean;
   thinkingSeconds: number;
+  /** Short status description shown during thinking */
+  description: string;
 }): React.ReactElement {
   const [awaitingConfirm, setAwaitingConfirm] = useState(false);
   const [dots, setDots] = useState("");
@@ -110,7 +113,7 @@ export default function TerminalChatInputThinking({
         <Box gap={2}>
           <Text>{frameWithSeconds}</Text>
           <Text>
-            Thinking
+            Thinking: {description}
             {dots}
           </Text>
         </Box>

@@ -59,6 +59,8 @@ export default function TerminalChatInput({
   interruptAgent,
   active,
   thinkingSeconds,
+  /** Short status description shown during thinking */
+  statusDescription,
   items = [],
 }: {
   isNew: boolean;
@@ -83,6 +85,8 @@ export default function TerminalChatInput({
   interruptAgent: () => void;
   active: boolean;
   thinkingSeconds: number;
+  /** Short status description shown during thinking */
+  statusDescription: string;
   // New: current conversation items so we can include them in bug reports
   items?: Array<ResponseItem>;
 }): React.ReactElement {
@@ -767,6 +771,7 @@ export default function TerminalChatInput({
             onInterrupt={interruptAgent}
             active={active}
             thinkingSeconds={thinkingSeconds}
+            description={statusDescription}
           />
         ) : (
           <Box paddingX={1}>
@@ -883,10 +888,12 @@ function TerminalChatInputThinking({
   onInterrupt,
   active,
   thinkingSeconds,
+  description,
 }: {
   onInterrupt: () => void;
   active: boolean;
   thinkingSeconds: number;
+  description: string;
 }) {
   const [awaitingConfirm, setAwaitingConfirm] = useState(false);
   const [dots, setDots] = useState("");
@@ -998,7 +1005,7 @@ function TerminalChatInputThinking({
         <Box gap={2}>
           <Text>{frameWithSeconds}</Text>
           <Text>
-            Thinking
+            Thinking: {description}
             {dots}
           </Text>
         </Box>

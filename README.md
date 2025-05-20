@@ -254,7 +254,7 @@ Set `CODEX_QUIET_MODE=1` to silence interactive UI noise.
 
 ## Tracing / verbose logging
 
-Setting the environment variable `DEBUG=true` prints full API request and response details:
+Setting the environment variable `DEBUG=true` prints full API request and response details and internal debug logs (e.g. state transitions like waiting for tool execution, prompt confirmations, etc.) to the console:
 
 ```shell
 DEBUG=true codex

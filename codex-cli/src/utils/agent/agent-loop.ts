@@ -71,7 +71,10 @@ type AgentLoopParams = {
    */
   disableResponseStorage?: boolean;
   onItem: (item: ResponseItem) => void;
+  /** Called when loading starts/stops (true=start, false=stop). */
   onLoading: (loading: boolean) => void;
+  /** Called to report status description while thinking (e.g. network or tool call). */
+  onStatus?: (status: string) => void;
 
   /** Extra writable roots to use with sandbox execution. */
   additionalWritableRoots: ReadonlyArray<string>;
@@ -132,6 +135,7 @@ export class AgentLoop {
 
   private onItem: (item: ResponseItem) => void;
   private onLoading: (loading: boolean) => void;
+  private onStatus: (status: string) => void;
   private getCommandConfirmation: (
     command: Array<string>,
     applyPatch: ApplyPatchCommand | undefined,
@@ -278,6 +282,7 @@ export class AgentLoop {
     config,
     onItem,
     onLoading,
+    onStatus,
     getCommandConfirmation,
     onLastResponseId,
     additionalWritableRoots,
@@ -299,6 +304,7 @@ export class AgentLoop {
     this.additionalWritableRoots = additionalWritableRoots;
     this.onItem = onItem;
     this.onLoading = onLoading;
+    this.onStatus = onStatus ?? (() => {});
     this.getCommandConfirmation = getCommandConfirmation;
     this.onLastResponseId = onLastResponseId;
 
@@ -444,6 +450,7 @@ export class AgentLoop {
 
     // TODO: allow arbitrary function calls (beyond shell/container.exec)
     if (name === "container.exec" || name === "shell") {
+      this.onStatus(`Calling tool ${name}`);
       const {
         outputText,
         metadata,
@@ -512,6 +519,7 @@ export class AgentLoop {
       timeoutInMillis: item.action.timeout_ms,
     };
 
+    this.onStatus("Calling local shell");
     const {
       outputText,
       metadata,
@@ -660,6 +668,8 @@ export class AgentLoop {
       }
 
       this.onLoading(true);
+      // Report initial network status before contacting the model
+      this.onStatus("Waiting for OpenAI servers");
 
       const staged: Array<ResponseItem | undefined> = [];
       const stageItem = (item: ResponseItem) => {

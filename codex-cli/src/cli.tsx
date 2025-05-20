@@ -36,6 +36,7 @@ import {
   loadConfig,
   PRETTY_PRINT,
   INSTRUCTIONS_FILEPATH,
+  CODEX_UNSAFE_ALLOW_NO_SANDBOX,
 } from "./utils/config";
 import {
   getApiKey as fetchApiKey,
@@ -58,6 +59,13 @@ import React from "react";
 // Call this early so `tail -F "$TMPDIR/oai-codex/codex-cli-latest.log"` works
 // immediately. This must be run with DEBUG=1 for logging to work.
 initLogger();
+
+if (CODEX_UNSAFE_ALLOW_NO_SANDBOX) {
+  // eslint-disable-next-line no-console
+  console.warn(
+    chalk.yellow(`codex: sandbox disabled -- running without sandbox (unsafe)`),
+  );
+}
 
 // TODO: migrate to new versions of quiet mode
 //

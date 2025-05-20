@@ -154,6 +154,7 @@ export default function TerminalChat({
     initialApprovalPolicy,
   );
   const [thinkingSeconds, setThinkingSeconds] = useState(0);
+  const [statusDescription, setStatusDescription] = useState<string>("");
 
   const handleCompact = async () => {
     setLoading(true);
@@ -261,6 +262,7 @@ export default function TerminalChat({
         });
       },
       onLoading: setLoading,
+      onStatus: setStatusDescription,
       getCommandConfirmation: async (
         command: Array<string>,
         applyPatch: ApplyPatchCommand | undefined,
@@ -337,6 +339,7 @@ export default function TerminalChat({
         clearInterval(handle);
       }
       setThinkingSeconds(0);
+      setStatusDescription("");
     }
     return () => {
       if (handle) {
@@ -580,6 +583,7 @@ export default function TerminalChat({
             }}
             items={items}
             thinkingSeconds={thinkingSeconds}
+            statusDescription={statusDescription}
           />
         )}
         {overlayMode === "history" && (
