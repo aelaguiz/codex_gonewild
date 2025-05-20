@@ -46,7 +46,7 @@ describe("TerminalChatInput multiline functionality", () => {
       onCompact: () => {},
       interruptAgent: () => {},
       active: true,
-      thinkingSeconds: 0,
+      totalThinkingSeconds: 0,
     };
 
     const { stdin, lastFrameStripped, flush, cleanup } = renderTui(
@@ -98,7 +98,7 @@ describe("TerminalChatInput multiline functionality", () => {
       onCompact: () => {},
       interruptAgent: () => {},
       active: true,
-      thinkingSeconds: 0,
+      totalThinkingSeconds: 0,
     };
 
     const { stdin, lastFrameStripped, flush, cleanup } = renderTui(

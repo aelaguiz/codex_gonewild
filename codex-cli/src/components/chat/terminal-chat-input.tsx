@@ -59,6 +59,7 @@ export default function TerminalChatInput({
   interruptAgent,
   active,
   statusState,
+  totalThinkingSeconds,
   items = [],
 }: {
   isNew: boolean;
@@ -87,6 +88,8 @@ export default function TerminalChatInput({
     description: string;
     startTime?: number;
   };
+  /** Total thinking time since request start */
+  totalThinkingSeconds: number;
   // New: current conversation items so we can include them in bug reports
   items?: Array<ResponseItem>;
 }): React.ReactElement {
@@ -770,6 +773,7 @@ export default function TerminalChatInput({
           <TerminalChatInputThinking
             onInterrupt={interruptAgent}
             active={active}
+            totalThinkingSeconds={totalThinkingSeconds}
             statusState={statusState}
           />
         ) : (
@@ -886,12 +890,15 @@ export default function TerminalChatInput({
 function TerminalChatInputThinking({
   onInterrupt,
   active,
+  totalThinkingSeconds,
   statusState,
 }: {
   /** Interrupt handler invoked on double-ESC */
   onInterrupt: () => void;
   /** Whether the thinking UI is active */
   active: boolean;
+  /** Total thinking time since request start */
+  totalThinkingSeconds: number;
   /** Current status and its start time used to compute elapsed thinking time */
   statusState: {
     description: string;
@@ -907,14 +914,14 @@ function TerminalChatInputThinking({
     500,
   );
 
-  // Compute and update per-turn elapsed thinking time since statusState.startTime
+  // Compute and update elapsed time for the current command since statusState.startTime
   const { description, startTime } = statusState;
-  const [thinkingSeconds, setThinkingSeconds] = useState(() =>
+  const [commandSeconds, setCommandSeconds] = useState(() =>
     startTime != null ? Math.floor((Date.now() - startTime) / 1000) : 0,
   );
   useInterval(() => {
     if (active && startTime != null) {
-      setThinkingSeconds(Math.floor((Date.now() - startTime) / 1000));
+      setCommandSeconds(Math.floor((Date.now() - startTime) / 1000));
     }
   }, 1000);
 
@@ -939,7 +946,7 @@ function TerminalChatInputThinking({
 
   // Keep the elapsed‑seconds text fixed while the ball animation moves.
   const frameTemplate = ballFrames[frame] ?? ballFrames[0];
-  const frameWithSeconds = `${frameTemplate} ${thinkingSeconds}s`;
+  const frameWithSeconds = `${frameTemplate} ${totalThinkingSeconds}s`;
 
   // ---------------------------------------------------------------------
   // Raw stdin listener to catch the case where the terminal delivers two
@@ -1018,7 +1025,7 @@ function TerminalChatInputThinking({
         <Box gap={2}>
           <Text>{frameWithSeconds}</Text>
           <Text>
-            Thinking: {description} ({thinkingSeconds}s){dots}
+            Thinking: {description} ({commandSeconds}s){dots}
           </Text>
         </Box>
         <Text>

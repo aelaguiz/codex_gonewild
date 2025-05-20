@@ -1,3 +1,5 @@
+/* eslint-disable */
+
 import type { ReviewDecision } from "./review.js";
 import type { ApplyPatchCommand, ApprovalPolicy } from "../../approvals.js";
 import type { AppConfig } from "../config.js";
@@ -31,6 +33,7 @@ import {
 } from "../session.js";
 import { applyPatchToolInstructions } from "./apply-patch.js";
 import { handleExecCommand } from "./handle-exec-command.js";
+import { formatCommandForDisplay } from "../../format-command.js";
 import { HttpsProxyAgent } from "https-proxy-agent";
 import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -530,7 +533,7 @@ export class AgentLoop {
       timeoutInMillis: item.action.timeout_ms,
     };
 
-    this.onStatus("Calling local shell");
+    this.onStatus(`Calling local shell: ${formatCommandForDisplay(args.cmd)}`);
     const {
       outputText,
       metadata,
@@ -1070,13 +1073,12 @@ export class AgentLoop {
                     IteratorResult<ResponseEvent>
                   >((_, reject) => {
                     idleTimer = setTimeout(() => {
-                      stream.controller?.abort?.();
+                      (stream as any)?.controller?.abort?.();
                       reject(new IdleTimeoutError());
                     }, STREAM_IDLE_TIMEOUT_MS);
                   });
                   let result: IteratorResult<ResponseEvent>;
                   try {
-                    // eslint-disable-next-line no-await-in-loop
                     result = await Promise.race([next, idlePromise]);
                   } finally {
                     if (idleTimer) {

@@ -80,7 +80,7 @@ describe("TerminalChatInput file tag suggestions", () => {
     onCompact: vi.fn(),
     interruptAgent: vi.fn(),
     active: true,
-    thinkingSeconds: 0,
+    totalThinkingSeconds: 0,
   };
 
   beforeEach(() => {

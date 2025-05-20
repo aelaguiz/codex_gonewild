@@ -59,7 +59,7 @@ describe("/clear command", () => {
       onCompact: () => {},
       interruptAgent: () => {},
       active: true,
-      thinkingSeconds: 0,
+      totalThinkingSeconds: 0,
       items: existingItems,
     };
 
