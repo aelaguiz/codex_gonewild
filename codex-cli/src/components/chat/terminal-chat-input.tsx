@@ -58,9 +58,7 @@ export default function TerminalChatInput({
   onCompact,
   interruptAgent,
   active,
-  thinkingSeconds,
-  /** Short status description shown during thinking */
-  statusDescription,
+  statusState,
   items = [],
 }: {
   isNew: boolean;
@@ -84,9 +82,11 @@ export default function TerminalChatInput({
   onCompact: () => void;
   interruptAgent: () => void;
   active: boolean;
-  thinkingSeconds: number;
-  /** Short status description shown during thinking */
-  statusDescription: string;
+  /** Current status and its start time used to compute elapsed thinking time */
+  statusState: {
+    description: string;
+    startTime?: number;
+  };
   // New: current conversation items so we can include them in bug reports
   items?: Array<ResponseItem>;
 }): React.ReactElement {
@@ -770,8 +770,7 @@ export default function TerminalChatInput({
           <TerminalChatInputThinking
             onInterrupt={interruptAgent}
             active={active}
-            thinkingSeconds={thinkingSeconds}
-            description={statusDescription}
+            statusState={statusState}
           />
         ) : (
           <Box paddingX={1}>
@@ -887,21 +886,37 @@ export default function TerminalChatInput({
 function TerminalChatInputThinking({
   onInterrupt,
   active,
-  thinkingSeconds,
-  description,
+  statusState,
 }: {
+  /** Interrupt handler invoked on double-ESC */
   onInterrupt: () => void;
+  /** Whether the thinking UI is active */
   active: boolean;
-  thinkingSeconds: number;
-  description: string;
+  /** Current status and its start time used to compute elapsed thinking time */
+  statusState: {
+    description: string;
+    startTime?: number;
+  };
 }) {
   const [awaitingConfirm, setAwaitingConfirm] = useState(false);
   const [dots, setDots] = useState("");
 
   // Animate ellipsis
+  useInterval(
+    () => setDots((prev) => (prev.length < 3 ? prev + "." : "")),
+    500,
+  );
+
+  // Compute and update per-turn elapsed thinking time since statusState.startTime
+  const { description, startTime } = statusState;
+  const [thinkingSeconds, setThinkingSeconds] = useState(() =>
+    startTime != null ? Math.floor((Date.now() - startTime) / 1000) : 0,
+  );
   useInterval(() => {
-    setDots((prev) => (prev.length < 3 ? prev + "." : ""));
-  }, 500);
+    if (active && startTime != null) {
+      setThinkingSeconds(Math.floor((Date.now() - startTime) / 1000));
+    }
+  }, 1000);
 
   // Spinner frames with embedded seconds
   const ballFrames = [
@@ -970,8 +985,6 @@ function TerminalChatInputThinking({
     };
   }, [stdin, awaitingConfirm, onInterrupt, active, setRawMode]);
 
-  // No local timer: the parent component supplies the elapsed time via props.
-
   // Listen for the escape key to allow the user to interrupt the current
   // operation. We require two presses within a short window (1.5s) to avoid
   // accidental cancellations.
@@ -1005,8 +1018,7 @@ function TerminalChatInputThinking({
         <Box gap={2}>
           <Text>{frameWithSeconds}</Text>
           <Text>
-            Thinking: {description}
-            {dots}
+            Thinking: {description} ({thinkingSeconds}s){dots}
           </Text>
         </Box>
         <Text>

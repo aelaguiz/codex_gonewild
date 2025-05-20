@@ -130,7 +130,7 @@ describe("thinking time counter", () => {
   }
 
   // TODO: this is disabled
-  it.fails("reports correct per-task thinking time per command", async () => {
+  it("reports correct per-task thinking time per command", async () => {
     await runScenario();
 
     const perTaskMsgs = items.filter(

@@ -10,22 +10,37 @@ import { useInterval } from "use-interval";
 export default function TerminalChatInputThinking({
   onInterrupt,
   active,
-  thinkingSeconds,
-  description,
+  statusState,
 }: {
+  /** Interrupt handler invoked on double-ESC */
   onInterrupt: () => void;
+  /** Whether the thinking UI is active */
   active: boolean;
-  thinkingSeconds: number;
-  /** Short status description shown during thinking */
-  description: string;
+  /** Current status and its start time used to compute elapsed thinking time */
+  statusState: {
+    description: string;
+    startTime?: number;
+  };
 }): React.ReactElement {
   const [awaitingConfirm, setAwaitingConfirm] = useState(false);
   const [dots, setDots] = useState("");
 
   // Animate the ellipsis
+  useInterval(
+    () => setDots((prev) => (prev.length < 3 ? prev + "." : "")),
+    500,
+  );
+
+  // Compute and update elapsed thinking time since statusState.startTime
+  const { description, startTime } = statusState;
+  const [thinkingSeconds, setThinkingSeconds] = useState(() =>
+    startTime != null ? Math.floor((Date.now() - startTime) / 1000) : 0,
+  );
   useInterval(() => {
-    setDots((prev) => (prev.length < 3 ? prev + "." : ""));
-  }, 500);
+    if (active && startTime != null) {
+      setThinkingSeconds(Math.floor((Date.now() - startTime) / 1000));
+    }
+  }, 1000);
 
   const { stdin, setRawMode } = useStdin();
 
@@ -113,8 +128,7 @@ export default function TerminalChatInputThinking({
         <Box gap={2}>
           <Text>{frameWithSeconds}</Text>
           <Text>
-            Thinking: {description}
-            {dots}
+            Thinking: {description} ({thinkingSeconds}s){dots}
           </Text>
         </Box>
         <Text>

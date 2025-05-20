@@ -46,6 +46,18 @@ const RATE_LIMIT_RETRY_WAIT_MS = parseInt(
 // See https://github.com/openai/openai-node/tree/v4?tab=readme-ov-file#configuring-an-https-agent-eg-for-proxies
 const PROXY_URL = process.env["HTTPS_PROXY"];
 
+// How long to wait (ms) without any streaming response events before retrying.
+const STREAM_IDLE_TIMEOUT_MS = 60000;
+
+class IdleTimeoutError extends Error {
+  constructor(message?: string) {
+    super(
+      message || `No response received in ${STREAM_IDLE_TIMEOUT_MS / 1000}s`,
+    );
+    this.name = "IdleTimeoutError";
+  }
+}
+
 export type CommandConfirmation = {
   review: ReviewDecision;
   applyPatch?: ApplyPatchCommand | undefined;
@@ -263,10 +275,9 @@ export class AgentLoop {
   public sessionId: string;
   /*
    * Cumulative thinking time across this AgentLoop instance (ms).
-   * Currently not used anywhere – comment out to keep the strict compiler
-   * happy under `noUnusedLocals`.  Restore when telemetry support lands.
+   * Used to track overall wait time across multiple turns.
    */
-  // private cumulativeThinkingMs = 0;
+  private cumulativeThinkingMs = 0;
   constructor({
     model,
     provider = "openai",
@@ -785,7 +796,8 @@ export class AgentLoop {
           stageItem(item as ResponseItem);
         }
         // Send request to OpenAI with retry on timeout.
-        let stream;
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        let stream: any;
 
         // Retry loop for transient errors. Up to MAX_RETRIES attempts.
         const MAX_RETRIES = 8;
@@ -1044,99 +1056,109 @@ export class AgentLoop {
           try {
             let newTurnInput: Array<ResponseInputItem> = [];
 
-            // eslint-disable-next-line no-await-in-loop
-            for await (const event of stream as AsyncIterable<ResponseEvent>) {
-              log(`AgentLoop.run(): response event ${event.type}`);
-
-              // process and surface each item (no-op until we can depend on streaming events)
-              if (event.type === "response.output_item.done") {
-                const item = event.item;
-                // 1) if it's a reasoning item, annotate it
-                type ReasoningItem = { type?: string; duration_ms?: number };
-                const maybeReasoning = item as ReasoningItem;
-                if (maybeReasoning.type === "reasoning") {
-                  maybeReasoning.duration_ms = Date.now() - thinkingStart;
-                }
-                if (
-                  item.type === "function_call" ||
-                  item.type === "local_shell_call"
-                ) {
-                  // Track outstanding tool call so we can abort later if needed.
-                  // The item comes from the streaming response, therefore it has
-                  // either `id` (chat) or `call_id` (responses) – we normalise
-                  // by reading both.
-                  const callId =
-                    (item as { call_id?: string; id?: string }).call_id ??
-                    (item as { id?: string }).id;
-                  if (callId) {
-                    this.pendingAborts.add(callId);
-                  }
-                } else {
-                  stageItem(item as ResponseItem);
-                }
-              }
-
-              if (event.type === "response.completed") {
-                if (thisGeneration === this.generation && !this.canceled) {
-                  for (const item of event.response.output) {
-                    stageItem(item as ResponseItem);
-                  }
-                }
-                if (
-                  event.response.status === "completed" ||
-                  (event.response.status as unknown as string) ===
-                    "requires_action"
-                ) {
-                  // TODO: remove this once we can depend on streaming events
-                  newTurnInput = await this.processEventsWithoutStreaming(
-                    event.response.output,
-                    stageItem,
-                  );
-
-                  // When we do not use server‑side storage we maintain our
-                  // own transcript so that *future* turns still contain full
-                  // conversational context. However, whether we advance to
-                  // another loop iteration should depend solely on the
-                  // presence of *new* input items (i.e. items that were not
-                  // part of the previous request). Re‑sending the transcript
-                  // by itself would create an infinite request loop because
-                  // `turnInput.length` would never reach zero.
-
-                  if (this.disableResponseStorage) {
-                    // 1) Append the freshly emitted output to our local
-                    //    transcript (minus non‑message items the model does
-                    //    not need to see again).
-                    const cleaned = filterToApiMessages(
-                      event.response.output.map(stripInternalFields),
-                    );
-                    this.transcript.push(...cleaned);
-
-                    // 2) Determine the *delta* (newTurnInput) that must be
-                    //    sent in the next iteration. If there is none we can
-                    //    safely terminate the loop – the transcript alone
-                    //    does not constitute new information for the
-                    //    assistant to act upon.
-
-                    const delta = filterToApiMessages(
-                      newTurnInput.map(stripInternalFields),
-                    );
-
-                    if (delta.length === 0) {
-                      // No new input => end conversation.
-                      newTurnInput = [];
-                    } else {
-                      // Re‑send full transcript *plus* the new delta so the
-                      // stateless backend receives complete context.
-                      newTurnInput = [...this.transcript, ...delta];
-                      // The prefix ends at the current transcript length –
-                      // everything after this index is new for the next
-                      // iteration.
-                      transcriptPrefixLen = this.transcript.length;
+            // Manually iterate over the stream to enforce an idle timeout.
+            {
+              const iterator = (stream as AsyncIterable<ResponseEvent>)[
+                Symbol.asyncIterator
+              ]();
+              let idleTimer: ReturnType<typeof setTimeout> | undefined;
+              try {
+                // eslint-disable-next-line no-constant-condition
+                while (true) {
+                  const next = iterator.next();
+                  const idlePromise = new Promise<
+                    IteratorResult<ResponseEvent>
+                  >((_, reject) => {
+                    idleTimer = setTimeout(() => {
+                      stream.controller?.abort?.();
+                      reject(new IdleTimeoutError());
+                    }, STREAM_IDLE_TIMEOUT_MS);
+                  });
+                  let result: IteratorResult<ResponseEvent>;
+                  try {
+                    // eslint-disable-next-line no-await-in-loop
+                    result = await Promise.race([next, idlePromise]);
+                  } finally {
+                    if (idleTimer) {
+                      clearTimeout(idleTimer);
                     }
                   }
+                  if (result.done) {
+                    break;
+                  }
+                  const event = result.value;
+                  log(`AgentLoop.run(): response event ${event.type}`);
+
+                  // process and surface each item (no-op until we can depend on streaming events)
+                  if (event.type === "response.output_item.done") {
+                    const item = event.item;
+                    type ReasoningItem = {
+                      type?: string;
+                      duration_ms?: number;
+                    };
+                    const maybeReasoning = item as ReasoningItem;
+                    if (maybeReasoning.type === "reasoning") {
+                      maybeReasoning.duration_ms = Date.now() - thinkingStart;
+                    }
+                    if (
+                      item.type === "function_call" ||
+                      item.type === "local_shell_call"
+                    ) {
+                      const callId =
+                        (item as { call_id?: string; id?: string }).call_id ??
+                        (item as { id?: string }).id;
+                      if (callId) {
+                        this.pendingAborts.add(callId);
+                      }
+                    } else {
+                      stageItem(item as ResponseItem);
+                    }
+                  }
+
+                  if (event.type === "response.completed") {
+                    if (thisGeneration === this.generation && !this.canceled) {
+                      for (const item of event.response.output) {
+                        stageItem(item as ResponseItem);
+                      }
+                    }
+                    if (
+                      event.response.status === "completed" ||
+                      (event.response.status as unknown as string) ===
+                        "requires_action"
+                    ) {
+                      // TODO: remove this once we can depend on streaming events
+                      // eslint-disable-next-line no-await-in-loop
+                      newTurnInput = await this.processEventsWithoutStreaming(
+                        event.response.output,
+                        stageItem,
+                      );
+
+                      if (this.disableResponseStorage) {
+                        const cleaned = filterToApiMessages(
+                          event.response.output.map(stripInternalFields),
+                        );
+                        this.transcript.push(...cleaned);
+
+                        const delta = filterToApiMessages(
+                          newTurnInput.map(stripInternalFields),
+                        );
+
+                        if (delta.length === 0) {
+                          newTurnInput = [];
+                        } else {
+                          newTurnInput = [...this.transcript, ...delta];
+                          transcriptPrefixLen = this.transcript.length;
+                        }
+                      }
+                    }
+                    lastResponseId = event.response.id;
+                    this.onLastResponseId(event.response.id);
+                  }
                 }
-                lastResponseId = event.response.id;
-                this.onLastResponseId(event.response.id);
+              } finally {
+                if (idleTimer) {
+                  clearTimeout(idleTimer);
+                }
               }
             }
 
@@ -1150,6 +1172,71 @@ export class AgentLoop {
             // Stream finished successfully – leave the retry loop.
             break;
           } catch (err: unknown) {
+            // Handle idle timeouts by aborting and retrying the stream before rate-limits.
+            if (
+              err instanceof IdleTimeoutError &&
+              streamRetryAttempt < MAX_STREAM_RETRIES
+            ) {
+              streamRetryAttempt += 1;
+              const waitMs =
+                RATE_LIMIT_RETRY_WAIT_MS * 2 ** (streamRetryAttempt - 1);
+              log(
+                `OpenAI stream idle for ${STREAM_IDLE_TIMEOUT_MS / 1000}s – retry ${streamRetryAttempt}/${MAX_STREAM_RETRIES} in ${waitMs} ms`,
+              );
+              // eslint-disable-next-line no-await-in-loop
+              await new Promise((res) => setTimeout(res, waitMs));
+
+              // Re-create the stream with the same parameters.
+              let reasoning: Reasoning | undefined;
+              if (this.model.startsWith("o")) {
+                reasoning = { effort: "high" };
+                if (
+                  this.model === "o3" ||
+                  this.model === "o4-mini" ||
+                  this.model === "codex-mini-latest"
+                ) {
+                  reasoning.summary = "auto";
+                }
+              }
+              const mergedInstructions = [prefix, this.instructions]
+                .filter(Boolean)
+                .join("\n");
+              const responseCall =
+                !this.config.provider ||
+                this.config.provider?.toLowerCase() === "openai"
+                  ? (params: ResponseCreateParams) =>
+                      this.oai.responses.create(params)
+                  : (params: ResponseCreateParams) =>
+                      responsesCreateViaChatCompletions(
+                        this.oai,
+                        params as ResponseCreateParams & { stream: true },
+                      );
+              log(
+                "agentLoop.run(): responseCall(1): turnInput: " +
+                  JSON.stringify(turnInput),
+              );
+              // eslint-disable-next-line no-await-in-loop
+              stream = await responseCall({
+                model: this.model,
+                instructions: mergedInstructions,
+                input: turnInput,
+                stream: true,
+                parallel_tool_calls: false,
+                reasoning,
+                ...(this.config.flexMode ? { service_tier: "flex" } : {}),
+                ...(this.disableResponseStorage
+                  ? { store: false }
+                  : {
+                      store: true,
+                      previous_response_id: lastResponseId || undefined,
+                    }),
+                tools: tools,
+                tool_choice: "auto",
+              });
+
+              this.currentStream = stream;
+              continue;
+            }
             const isRateLimitError = (e: unknown): boolean => {
               if (!e || typeof e !== "object") {
                 return false;
@@ -1316,40 +1403,40 @@ export class AgentLoop {
         this.pendingAborts.clear();
         // Now emit system messages recording the per‑turn *and* cumulative
         // thinking times so UIs and tests can surface/verify them.
-        // const thinkingEnd = Date.now();
+        const thinkingEnd = Date.now();
 
-        // 1) Per‑turn measurement – exact time spent between request and
-        //    response for *this* command.
-        // this.onItem({
-        //   id: `thinking-${thinkingEnd}`,
-        //   type: "message",
-        //   role: "system",
-        //   content: [
-        //     {
-        //       type: "input_text",
-        //       text: `🤔  Thinking time: ${Math.round(
-        //         (thinkingEnd - thinkingStart) / 1000
-        //       )} s`,
-        //     },
-        //   ],
-        // });
+        // 1) Per-turn measurement – exact time spent between request and
+        //    response for this command.
+        this.onItem({
+          id: `thinking-${thinkingEnd}`,
+          type: "message",
+          role: "system",
+          content: [
+            {
+              type: "input_text",
+              text: `🤔  Thinking time: ${Math.round(
+                (thinkingEnd - thinkingStart) / 1000,
+              )} s`,
+            },
+          ],
+        });
 
-        // 2) Session‑wide cumulative counter so users can track overall wait
+        // 2) Session-wide cumulative counter so users can track overall wait
         //    time across multiple turns.
-        // this.cumulativeThinkingMs += thinkingEnd - thinkingStart;
-        // this.onItem({
-        //   id: `thinking-total-${thinkingEnd}`,
-        //   type: "message",
-        //   role: "system",
-        //   content: [
-        //     {
-        //       type: "input_text",
-        //       text: `⏱  Total thinking time: ${Math.round(
-        //         this.cumulativeThinkingMs / 1000
-        //       )} s`,
-        //     },
-        //   ],
-        // });
+        this.cumulativeThinkingMs += thinkingEnd - thinkingStart;
+        this.onItem({
+          id: `thinking-total-${thinkingEnd}`,
+          type: "message",
+          role: "system",
+          content: [
+            {
+              type: "input_text",
+              text: `⏱  Total thinking time: ${Math.round(
+                this.cumulativeThinkingMs / 1000,
+              )} s`,
+            },
+          ],
+        });
 
         this.onLoading(false);
       };

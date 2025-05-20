@@ -154,6 +154,9 @@ export default function TerminalChat({
     initialApprovalPolicy,
   );
   const [thinkingSeconds, setThinkingSeconds] = useState(0);
+  const [thinkingStartTime, setThinkingStartTime] = useState<
+    number | undefined
+  >(undefined);
   const [statusDescription, setStatusDescription] = useState<string>("");
 
   const handleCompact = async () => {
@@ -330,6 +333,8 @@ export default function TerminalChat({
     // Only tick the "thinking…" timer when the agent is actually processing
     // a request *and* the user is not being asked to review a command.
     if (loading && confirmationPrompt == null) {
+      const now = Date.now();
+      setThinkingStartTime(now);
       setThinkingSeconds(0);
       handle = setInterval(() => {
         setThinkingSeconds((s) => s + 1);
@@ -338,6 +343,7 @@ export default function TerminalChat({
       if (handle) {
         clearInterval(handle);
       }
+      setThinkingStartTime(undefined);
       setThinkingSeconds(0);
       setStatusDescription("");
     }
@@ -582,8 +588,10 @@ export default function TerminalChat({
               return {};
             }}
             items={items}
-            thinkingSeconds={thinkingSeconds}
-            statusDescription={statusDescription}
+            statusState={{
+              description: statusDescription,
+              startTime: thinkingStartTime,
+            }}
           />
         )}
         {overlayMode === "history" && (
