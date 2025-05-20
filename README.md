@@ -475,6 +475,9 @@ export AZURE_OPENAI_API_VERSION="2025-03-01-preview" (Optional)
 export OPENROUTER_API_KEY="your-openrouter-key-here"
 
 # Similarly for other providers
+
+# Disable sandboxing for all commands (UNSAFE; runs without macOS Seatbelt or Linux sandboxes)
+export CODEX_UNSAFE_ALLOW_NO_SANDBOX=1
 ```
 
 ---
