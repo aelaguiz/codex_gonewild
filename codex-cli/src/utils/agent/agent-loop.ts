@@ -1180,6 +1180,17 @@ export class AgentLoop {
               streamRetryAttempt < MAX_STREAM_RETRIES
             ) {
               streamRetryAttempt += 1;
+              this.onItem({
+                id: `status-${Date.now()}`,
+                type: "message",
+                role: "system",
+                content: [
+                  {
+                    type: "input_text",
+                    text: `⏱  No response received in ${STREAM_IDLE_TIMEOUT_MS / 1000}s. Retrying (${streamRetryAttempt}/${MAX_STREAM_RETRIES})...`,
+                  },
+                ],
+              });
               const waitMs =
                 RATE_LIMIT_RETRY_WAIT_MS * 2 ** (streamRetryAttempt - 1);
               log(
