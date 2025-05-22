@@ -60,6 +60,7 @@ export default function TerminalChatInput({
   active,
   statusState,
   totalThinkingSeconds,
+  statusSummary,
   items = [],
 }: {
   isNew: boolean;
@@ -90,6 +91,8 @@ export default function TerminalChatInput({
   };
   /** Total thinking time since request start */
   totalThinkingSeconds: number;
+  /** One-line summary of the current status (shown above prompt) */
+  statusSummary?: string;
   // New: current conversation items so we can include them in bug reports
   items?: Array<ResponseItem>;
 }): React.ReactElement {
@@ -768,6 +771,11 @@ export default function TerminalChatInput({
 
   return (
     <Box flexDirection="column">
+      {statusSummary && (
+        <Box paddingX={2} marginBottom={1}>
+          <Text>⚡ {statusSummary}</Text>
+        </Box>
+      )}
       <Box borderStyle="round">
         {loading ? (
           <TerminalChatInputThinking

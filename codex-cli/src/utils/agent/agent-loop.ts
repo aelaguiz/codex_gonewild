@@ -1174,30 +1174,40 @@ export class AgentLoop {
             // Stream finished successfully – leave the retry loop.
             break;
           } catch (err: unknown) {
-            // Handle idle timeouts by aborting and retrying the stream before rate-limits.
+            const isPrematureCloseErr =
+              err instanceof Error &&
+              ((err as any).code === "ERR_STREAM_PREMATURE_CLOSE" ||
+                err.message?.includes("Premature close"));
+
+            // Handle idle timeouts and premature disconnects by retrying the stream.
             if (
-              err instanceof IdleTimeoutError &&
+              (err instanceof IdleTimeoutError || isPrematureCloseErr) &&
               streamRetryAttempt < MAX_STREAM_RETRIES
             ) {
               streamRetryAttempt += 1;
+              const messageText =
+                err instanceof IdleTimeoutError
+                  ? `⏱  No response received in ${STREAM_IDLE_TIMEOUT_MS / 1000}s. Retrying (${streamRetryAttempt}/${MAX_STREAM_RETRIES})...`
+                  : `⚠️  Connection closed prematurely while waiting for the model. Retrying (${streamRetryAttempt}/${MAX_STREAM_RETRIES})...`;
               this.onItem({
                 id: `status-${Date.now()}`,
                 type: "message",
                 role: "system",
-                content: [
-                  {
-                    type: "input_text",
-                    text: `⏱  No response received in ${STREAM_IDLE_TIMEOUT_MS / 1000}s. Retrying (${streamRetryAttempt}/${MAX_STREAM_RETRIES})...`,
-                  },
-                ],
+                content: [{ type: "input_text", text: messageText }],
               });
               const waitMs =
-                RATE_LIMIT_RETRY_WAIT_MS * 2 ** (streamRetryAttempt - 1);
+                err instanceof IdleTimeoutError
+                  ? RATE_LIMIT_RETRY_WAIT_MS * 2 ** (streamRetryAttempt - 1)
+                  : 0;
               log(
-                `OpenAI stream idle for ${STREAM_IDLE_TIMEOUT_MS / 1000}s – retry ${streamRetryAttempt}/${MAX_STREAM_RETRIES} in ${waitMs} ms`,
+                err instanceof IdleTimeoutError
+                  ? `OpenAI stream idle for ${STREAM_IDLE_TIMEOUT_MS / 1000}s – retry ${streamRetryAttempt}/${MAX_STREAM_RETRIES} in ${waitMs} ms`
+                  : `OpenAI stream closed prematurely – retry ${streamRetryAttempt}/${MAX_STREAM_RETRIES} in ${waitMs} ms`,
               );
-              // eslint-disable-next-line no-await-in-loop
-              await new Promise((res) => setTimeout(res, waitMs));
+              if (waitMs > 0) {
+                // eslint-disable-next-line no-await-in-loop
+                await new Promise((res) => setTimeout(res, waitMs));
+              }
 
               // Re-create the stream with the same parameters.
               let reasoning: Reasoning | undefined;
