@@ -161,6 +161,64 @@ pub(crate) async fn stream_chat_completions(
     // aggregated assistant message was recorded alongside an earlier partial).
     let mut last_assistant_text: Option<String> = None;
 
+    // Buffer for merging consecutive assistant items (text content + tool calls)
+    // into a single assistant message. This is required by Anthropic's Chat Completions
+    // API which expects all tool_calls from one model turn to be in ONE assistant message.
+    let mut pending_assistant_content: Option<String> = None;
+    let mut pending_tool_calls: Vec<serde_json::Value> = Vec::new();
+    let mut pending_reasoning: Option<String> = None;
+
+    // Helper closure to flush buffered assistant items as a single message
+    let flush_pending_assistant = |messages: &mut Vec<serde_json::Value>,
+                                   content: &mut Option<String>,
+                                   tool_calls: &mut Vec<serde_json::Value>,
+                                   reasoning: &mut Option<String>,
+                                   last_text: &mut Option<String>| {
+        if content.is_none() && tool_calls.is_empty() {
+            return;
+        }
+
+        let content_val = content.take();
+
+        // Skip exact-duplicate assistant messages
+        if let Some(text) = &content_val {
+            if let Some(prev) = last_text.as_ref() {
+                if prev == text && tool_calls.is_empty() {
+                    return;
+                }
+            }
+            *last_text = Some(text.clone());
+        }
+
+        let mut msg = if tool_calls.is_empty() {
+            // Text-only assistant message
+            json!({
+                "role": "assistant",
+                "content": content_val.unwrap_or_default()
+            })
+        } else {
+            // Assistant message with tool calls (and optional content)
+            let tool_calls_arr: Vec<serde_json::Value> = tool_calls.drain(..).collect();
+            tracing::debug!(
+                "Flushing merged assistant message with {} tool_calls",
+                tool_calls_arr.len()
+            );
+            json!({
+                "role": "assistant",
+                "content": content_val,
+                "tool_calls": tool_calls_arr
+            })
+        };
+
+        if let Some(r) = reasoning.take() {
+            if let Some(obj) = msg.as_object_mut() {
+                obj.insert("reasoning".to_string(), json!(r));
+            }
+        }
+
+        messages.push(msg);
+    };
+
     for (idx, item) in input.iter().enumerate() {
         match item {
             ResponseItem::Message { role, content, .. } => {
@@ -184,59 +242,80 @@ pub(crate) async fn stream_chat_completions(
                     }
                 }
 
-                // Skip exact-duplicate assistant messages.
                 if role == "assistant" {
-                    if let Some(prev) = &last_assistant_text
-                        && prev == &text
-                    {
-                        continue;
+                    // Buffer assistant content to merge with subsequent tool calls
+                    if let Some(existing) = pending_assistant_content.take() {
+                        pending_assistant_content = Some(existing + &text);
+                    } else {
+                        pending_assistant_content = Some(text.clone());
                     }
-                    last_assistant_text = Some(text.clone());
-                }
-
-                // For assistant messages, always send a plain string for compatibility.
-                // For user messages, if an image is present, send an array of content items.
-                let content_value = if role == "assistant" {
-                    json!(text)
-                } else if saw_image {
-                    json!(items)
+                    // Collect reasoning for this item
+                    if let Some(reasoning) = reasoning_by_anchor_index.get(&idx) {
+                        if let Some(existing) = pending_reasoning.take() {
+                            pending_reasoning = Some(existing + reasoning);
+                        } else {
+                            pending_reasoning = Some(reasoning.clone());
+                        }
+                    }
                 } else {
-                    json!(text)
-                };
+                    // Non-assistant message: flush any pending assistant items first
+                    flush_pending_assistant(
+                        &mut messages,
+                        &mut pending_assistant_content,
+                        &mut pending_tool_calls,
+                        &mut pending_reasoning,
+                        &mut last_assistant_text,
+                    );
 
-                let mut msg = json!({"role": role, "content": content_value});
-                if role == "assistant"
-                    && let Some(reasoning) = reasoning_by_anchor_index.get(&idx)
-                    && let Some(obj) = msg.as_object_mut()
-                {
-                    obj.insert("reasoning".to_string(), json!(reasoning));
+                    // For user messages, if an image is present, send an array of content items.
+                    let content_value = if saw_image {
+                        json!(items)
+                    } else {
+                        json!(text)
+                    };
+
+                    messages.push(json!({"role": role, "content": content_value}));
                 }
-                messages.push(msg);
             }
             ResponseItem::FunctionCall {
                 name,
                 arguments,
                 call_id,
+                thought_signature,
                 ..
             } => {
-                let mut msg = json!({
-                    "role": "assistant",
-                    "content": null,
-                    "tool_calls": [{
-                        "id": call_id,
-                        "type": "function",
-                        "function": {
-                            "name": name,
-                            "arguments": arguments,
-                        }
-                    }]
+                tracing::debug!(
+                    "Buffering FunctionCall: name={} call_id={} has_thought_sig={}",
+                    name,
+                    call_id,
+                    thought_signature.is_some()
+                );
+                // Buffer tool call to merge with other consecutive assistant items
+                // Include thought_signature for Gemini thinking models
+                let mut tool_call_json = json!({
+                    "id": call_id,
+                    "type": "function",
+                    "function": {
+                        "name": name,
+                        "arguments": arguments,
+                    }
                 });
-                if let Some(reasoning) = reasoning_by_anchor_index.get(&idx)
-                    && let Some(obj) = msg.as_object_mut()
-                {
-                    obj.insert("reasoning".to_string(), json!(reasoning));
+                if let Some(sig) = thought_signature {
+                    tool_call_json["extra_content"] = json!({
+                        "google": {
+                            "thought_signature": sig
+                        }
+                    });
                 }
-                messages.push(msg);
+                pending_tool_calls.push(tool_call_json);
+                // Collect reasoning for this item
+                if let Some(reasoning) = reasoning_by_anchor_index.get(&idx) {
+                    if let Some(existing) = pending_reasoning.take() {
+                        pending_reasoning = Some(existing + reasoning);
+                    } else {
+                        pending_reasoning = Some(reasoning.clone());
+                    }
+                }
             }
             ResponseItem::LocalShellCall {
                 id,
@@ -244,25 +323,36 @@ pub(crate) async fn stream_chat_completions(
                 status,
                 action,
             } => {
-                // Confirm with API team.
-                let mut msg = json!({
-                    "role": "assistant",
-                    "content": null,
-                    "tool_calls": [{
-                        "id": id.clone().unwrap_or_else(|| "".to_string()),
-                        "type": "local_shell_call",
-                        "status": status,
-                        "action": action,
-                    }]
-                });
-                if let Some(reasoning) = reasoning_by_anchor_index.get(&idx)
-                    && let Some(obj) = msg.as_object_mut()
-                {
-                    obj.insert("reasoning".to_string(), json!(reasoning));
+                // Buffer local shell call as a tool call
+                pending_tool_calls.push(json!({
+                    "id": id.clone().unwrap_or_else(|| "".to_string()),
+                    "type": "local_shell_call",
+                    "status": status,
+                    "action": action,
+                }));
+                // Collect reasoning for this item
+                if let Some(reasoning) = reasoning_by_anchor_index.get(&idx) {
+                    if let Some(existing) = pending_reasoning.take() {
+                        pending_reasoning = Some(existing + reasoning);
+                    } else {
+                        pending_reasoning = Some(reasoning.clone());
+                    }
                 }
-                messages.push(msg);
             }
             ResponseItem::FunctionCallOutput { call_id, output } => {
+                // Tool output: flush any pending assistant items first
+                flush_pending_assistant(
+                    &mut messages,
+                    &mut pending_assistant_content,
+                    &mut pending_tool_calls,
+                    &mut pending_reasoning,
+                    &mut last_assistant_text,
+                );
+
+                tracing::debug!(
+                    "Serializing FunctionCallOutput: tool_call_id={}",
+                    call_id
+                );
                 // Prefer structured content items when available (e.g., images)
                 // otherwise fall back to the legacy plain-string content.
                 let content_value = if let Some(items) = &output.content_items {
@@ -295,20 +385,26 @@ pub(crate) async fn stream_chat_completions(
                 input,
                 status: _,
             } => {
-                messages.push(json!({
-                    "role": "assistant",
-                    "content": null,
-                    "tool_calls": [{
-                        "id": id,
-                        "type": "custom",
-                        "custom": {
-                            "name": name,
-                            "input": input,
-                        }
-                    }]
+                // Buffer custom tool call
+                pending_tool_calls.push(json!({
+                    "id": id,
+                    "type": "custom",
+                    "custom": {
+                        "name": name,
+                        "input": input,
+                    }
                 }));
             }
             ResponseItem::CustomToolCallOutput { call_id, output } => {
+                // Tool output: flush any pending assistant items first
+                flush_pending_assistant(
+                    &mut messages,
+                    &mut pending_assistant_content,
+                    &mut pending_tool_calls,
+                    &mut pending_reasoning,
+                    &mut last_assistant_text,
+                );
+
                 messages.push(json!({
                     "role": "tool",
                     "tool_call_id": call_id,
@@ -328,6 +424,15 @@ pub(crate) async fn stream_chat_completions(
             }
         }
     }
+
+    // Flush any remaining buffered assistant items
+    flush_pending_assistant(
+        &mut messages,
+        &mut pending_assistant_content,
+        &mut pending_tool_calls,
+        &mut pending_reasoning,
+        &mut last_assistant_text,
+    );
 
     let tools_json = create_tools_json_for_chat_completions_api(&prompt.tools)?;
     let payload = json!({
@@ -503,20 +608,26 @@ async fn process_chat_sse<S>(
 {
     let mut stream = stream.eventsource();
 
-    // State to accumulate a function call across streaming chunks.
+    // State to accumulate function calls across streaming chunks.
     // OpenAI may split the `arguments` string over multiple `delta` events
     // until the chunk whose `finish_reason` is `tool_calls` is emitted. We
-    // keep collecting the pieces here and forward a single
-    // `ResponseItem::FunctionCall` once the call is complete.
-    #[derive(Default)]
+    // keep collecting the pieces here and forward `ResponseItem::FunctionCall`
+    // items once the calls are complete.
+    //
+    // IMPORTANT: When multiple tools are called in parallel, each has a distinct
+    // `index` in the streaming chunks. We must track each tool call separately
+    // by its index to avoid concatenating arguments across different calls.
+    #[derive(Default, Clone)]
     struct FunctionCallState {
         name: Option<String>,
         arguments: String,
         call_id: Option<String>,
-        active: bool,
+        /// Gemini thought_signature - must be echoed back for thinking models.
+        thought_signature: Option<String>,
     }
 
-    let mut fn_call_state = FunctionCallState::default();
+    let mut fn_call_states: std::collections::HashMap<i64, FunctionCallState> =
+        std::collections::HashMap::new();
     let mut assistant_item: Option<ResponseItem> = None;
     let mut reasoning_item: Option<ResponseItem> = None;
 
@@ -647,29 +758,58 @@ async fn process_chat_sse<S>(
             }
 
             // Handle streaming function / tool calls.
+            // Each tool call chunk includes an `index` to identify which tool call
+            // the chunk belongs to. We must track state per-index to handle parallel
+            // tool calls correctly.
             if let Some(tool_calls) = choice
                 .get("delta")
                 .and_then(|d| d.get("tool_calls"))
                 .and_then(|tc| tc.as_array())
-                && let Some(tool_call) = tool_calls.first()
             {
-                // Mark that we have an active function call in progress.
-                fn_call_state.active = true;
+                for tool_call in tool_calls {
+                    // Get the index for this tool call (defaults to 0 for single calls).
+                    let index = tool_call
+                        .get("index")
+                        .and_then(|v| v.as_i64())
+                        .unwrap_or(0);
 
-                // Extract call_id if present.
-                if let Some(id) = tool_call.get("id").and_then(|v| v.as_str()) {
-                    fn_call_state.call_id.get_or_insert_with(|| id.to_string());
-                }
+                    // Get or create state for this tool call index.
+                    let fn_call_state = fn_call_states.entry(index).or_default();
 
-                // Extract function details if present.
-                if let Some(function) = tool_call.get("function") {
-                    if let Some(name) = function.get("name").and_then(|n| n.as_str()) {
-                        fn_call_state.name.get_or_insert_with(|| name.to_string());
+                    // Extract call_id if present.
+                    if let Some(id) = tool_call.get("id").and_then(|v| v.as_str()) {
+                        tracing::debug!("Streaming: extracted call_id={} for index={}", id, index);
+                        fn_call_state.call_id.get_or_insert_with(|| id.to_string());
                     }
 
-                    if let Some(args_fragment) = function.get("arguments").and_then(|a| a.as_str())
+                    // Extract function details if present.
+                    if let Some(function) = tool_call.get("function") {
+                        if let Some(name) = function.get("name").and_then(|n| n.as_str()) {
+                            fn_call_state.name.get_or_insert_with(|| name.to_string());
+                        }
+
+                        if let Some(args_fragment) =
+                            function.get("arguments").and_then(|a| a.as_str())
+                        {
+                            fn_call_state.arguments.push_str(args_fragment);
+                        }
+                    }
+
+                    // Extract Gemini thought_signature from extra_content.google.thought_signature
+                    // This must be echoed back for thinking models.
+                    if let Some(thought_sig) = tool_call
+                        .get("extra_content")
+                        .and_then(|ec| ec.get("google"))
+                        .and_then(|g| g.get("thought_signature"))
+                        .and_then(|ts| ts.as_str())
                     {
-                        fn_call_state.arguments.push_str(args_fragment);
+                        tracing::debug!(
+                            "Streaming: extracted thought_signature for index={}",
+                            index
+                        );
+                        fn_call_state
+                            .thought_signature
+                            .get_or_insert_with(|| thought_sig.to_string());
                     }
                 }
             }
@@ -679,32 +819,100 @@ async fn process_chat_sse<S>(
                 && !finish_reason.is_empty()
             {
                 match finish_reason {
-                    "tool_calls" if fn_call_state.active => {
+                    "tool_calls" if !fn_call_states.is_empty() => {
                         // First, flush the terminal raw reasoning so UIs can finalize
                         // the reasoning stream before any exec/tool events begin.
                         if let Some(item) = reasoning_item.take() {
                             let _ = tx_event.send(Ok(ResponseEvent::OutputItemDone(item))).await;
                         }
 
-                        // Then emit the FunctionCall response item.
-                        let item = ResponseItem::FunctionCall {
-                            id: None,
-                            name: fn_call_state.name.clone().unwrap_or_else(|| "".to_string()),
-                            arguments: fn_call_state.arguments.clone(),
-                            call_id: fn_call_state.call_id.clone().unwrap_or_else(String::new),
-                        };
+                        // Emit all accumulated FunctionCall response items in index order.
+                        let mut indices: Vec<_> = fn_call_states.keys().copied().collect();
+                        indices.sort();
+                        for index in indices {
+                            if let Some(fn_call_state) = fn_call_states.get(&index) {
+                                let emitted_call_id = fn_call_state
+                                    .call_id
+                                    .clone()
+                                    .unwrap_or_else(String::new);
+                                let emitted_name = fn_call_state
+                                    .name
+                                    .clone()
+                                    .unwrap_or_else(|| "".to_string());
+                                tracing::debug!(
+                                    "Emitting FunctionCall: name={} call_id={} (was_some={})",
+                                    emitted_name,
+                                    emitted_call_id,
+                                    fn_call_state.call_id.is_some()
+                                );
+                                let item = ResponseItem::FunctionCall {
+                                    id: None,
+                                    name: emitted_name,
+                                    arguments: fn_call_state.arguments.clone(),
+                                    call_id: emitted_call_id,
+                                    thought_signature: fn_call_state.thought_signature.clone(),
+                                };
 
-                        let _ = tx_event.send(Ok(ResponseEvent::OutputItemDone(item))).await;
+                                let _ =
+                                    tx_event.send(Ok(ResponseEvent::OutputItemDone(item))).await;
+                            }
+                        }
                     }
                     "stop" => {
-                        // Regular turn without tool-call. Emit the final assistant message
-                        // as a single OutputItemDone so non-delta consumers see the result.
-                        if let Some(item) = assistant_item.take() {
-                            let _ = tx_event.send(Ok(ResponseEvent::OutputItemDone(item))).await;
-                        }
-                        // Also emit a terminal Reasoning item so UIs can finalize raw reasoning.
-                        if let Some(item) = reasoning_item.take() {
-                            let _ = tx_event.send(Ok(ResponseEvent::OutputItemDone(item))).await;
+                        // Some providers (e.g., Gemini) use "stop" even when emitting tool calls.
+                        // Check if we have accumulated function call state and emit those first.
+                        if !fn_call_states.is_empty() {
+                            tracing::debug!(
+                                "finish_reason=stop but have {} accumulated tool calls, emitting them",
+                                fn_call_states.len()
+                            );
+                            // First, flush the terminal raw reasoning so UIs can finalize
+                            // the reasoning stream before any exec/tool events begin.
+                            if let Some(item) = reasoning_item.take() {
+                                let _ = tx_event.send(Ok(ResponseEvent::OutputItemDone(item))).await;
+                            }
+
+                            // Emit all accumulated FunctionCall response items in index order.
+                            let mut indices: Vec<_> = fn_call_states.keys().copied().collect();
+                            indices.sort();
+                            for index in indices {
+                                if let Some(fn_call_state) = fn_call_states.get(&index) {
+                                    let emitted_call_id = fn_call_state
+                                        .call_id
+                                        .clone()
+                                        .unwrap_or_else(String::new);
+                                    let emitted_name = fn_call_state
+                                        .name
+                                        .clone()
+                                        .unwrap_or_else(|| "".to_string());
+                                    tracing::debug!(
+                                        "Emitting FunctionCall (stop): name={} call_id={} (was_some={})",
+                                        emitted_name,
+                                        emitted_call_id,
+                                        fn_call_state.call_id.is_some()
+                                    );
+                                    let item = ResponseItem::FunctionCall {
+                                        id: None,
+                                        name: emitted_name,
+                                        arguments: fn_call_state.arguments.clone(),
+                                        call_id: emitted_call_id,
+                                        thought_signature: fn_call_state.thought_signature.clone(),
+                                    };
+
+                                    let _ =
+                                        tx_event.send(Ok(ResponseEvent::OutputItemDone(item))).await;
+                                }
+                            }
+                        } else {
+                            // Regular turn without tool-call. Emit the final assistant message
+                            // as a single OutputItemDone so non-delta consumers see the result.
+                            if let Some(item) = assistant_item.take() {
+                                let _ = tx_event.send(Ok(ResponseEvent::OutputItemDone(item))).await;
+                            }
+                            // Also emit a terminal Reasoning item so UIs can finalize raw reasoning.
+                            if let Some(item) = reasoning_item.take() {
+                                let _ = tx_event.send(Ok(ResponseEvent::OutputItemDone(item))).await;
+                            }
                         }
                     }
                     _ => {}
