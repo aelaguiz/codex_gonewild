@@ -25,6 +25,8 @@ use crate::git_info::resolve_root_git_project_for_trust;
 use crate::model_family::ModelFamily;
 use crate::model_family::derive_default_model_family;
 use crate::model_family::find_family_for_model;
+use crate::model_provider_info::ANTHROPIC_PROVIDER_ID;
+use crate::model_provider_info::GOOGLE_PROVIDER_ID;
 use crate::model_provider_info::LMSTUDIO_OSS_PROVIDER_ID;
 use crate::model_provider_info::ModelProviderInfo;
 use crate::model_provider_info::OLLAMA_OSS_PROVIDER_ID;
@@ -1070,10 +1072,26 @@ impl Config {
             model_providers.entry(key).or_insert(provider);
         }
 
+        // Determine model early so we can auto-select provider based on model name
+        let resolved_model = model
+            .clone()
+            .or(config_profile.model.clone())
+            .or(cfg.model.clone())
+            .unwrap_or_else(default_model);
+
         let model_provider_id = model_provider
             .or(config_profile.model_provider)
             .or(cfg.model_provider)
-            .unwrap_or_else(|| "openai".to_string());
+            .unwrap_or_else(|| {
+                // Auto-select provider based on model name
+                if resolved_model.starts_with("claude-") {
+                    ANTHROPIC_PROVIDER_ID.to_string()
+                } else if resolved_model.starts_with("gemini-") {
+                    GOOGLE_PROVIDER_ID.to_string()
+                } else {
+                    "openai".to_string()
+                }
+            });
         let model_provider = model_providers
             .get(&model_provider_id)
             .ok_or_else(|| {
@@ -1107,10 +1125,8 @@ impl Config {
 
         let forced_login_method = cfg.forced_login_method;
 
-        let model = model
-            .or(config_profile.model)
-            .or(cfg.model)
-            .unwrap_or_else(default_model);
+        // Use the already-resolved model (computed earlier for provider auto-selection)
+        let model = resolved_model;
 
         let mut model_family =
             find_family_for_model(&model).unwrap_or_else(|| derive_default_model_family(&model));

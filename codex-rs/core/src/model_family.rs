@@ -237,6 +237,44 @@ pub fn find_family_for_model(slug: &str) -> Option<ModelFamily> {
             support_verbosity: true,
             truncation_policy: TruncationPolicy::Bytes(10_000),
         )
+    // Anthropic Claude models
+    } else if slug.starts_with("claude-opus-4") || slug.starts_with("claude-sonnet-4") {
+        model_family!(
+            slug, slug,
+            supports_reasoning_summaries: false,
+            needs_special_apply_patch_instructions: true,
+            apply_patch_tool_type: Some(ApplyPatchToolType::Freeform),
+            shell_type: ConfigShellToolType::ShellCommand,
+            supports_parallel_tool_calls: true,
+            truncation_policy: TruncationPolicy::Bytes(10_000),
+        )
+    } else if slug.starts_with("claude-3") {
+        model_family!(
+            slug, slug,
+            supports_reasoning_summaries: false,
+            needs_special_apply_patch_instructions: true,
+            shell_type: ConfigShellToolType::Default,
+            truncation_policy: TruncationPolicy::Bytes(10_000),
+        )
+    // Google Gemini models
+    } else if slug.starts_with("gemini-2") || slug.starts_with("gemini-3") {
+        model_family!(
+            slug, slug,
+            supports_reasoning_summaries: false,
+            needs_special_apply_patch_instructions: true,
+            apply_patch_tool_type: Some(ApplyPatchToolType::Freeform),
+            shell_type: ConfigShellToolType::ShellCommand,
+            supports_parallel_tool_calls: true,
+            truncation_policy: TruncationPolicy::Bytes(10_000),
+        )
+    } else if slug.starts_with("gemini-") {
+        model_family!(
+            slug, slug,
+            supports_reasoning_summaries: false,
+            needs_special_apply_patch_instructions: true,
+            shell_type: ConfigShellToolType::Default,
+            truncation_policy: TruncationPolicy::Bytes(10_000),
+        )
     } else {
         None
     }

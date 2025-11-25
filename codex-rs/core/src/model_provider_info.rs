@@ -308,6 +308,9 @@ pub const DEFAULT_OLLAMA_PORT: u16 = 11434;
 pub const LMSTUDIO_OSS_PROVIDER_ID: &str = "lmstudio";
 pub const OLLAMA_OSS_PROVIDER_ID: &str = "ollama";
 
+pub const ANTHROPIC_PROVIDER_ID: &str = "anthropic";
+pub const GOOGLE_PROVIDER_ID: &str = "google";
+
 /// Built-in default provider list.
 pub fn built_in_model_providers() -> HashMap<String, ModelProviderInfo> {
     use ModelProviderInfo as P;
@@ -355,6 +358,52 @@ pub fn built_in_model_providers() -> HashMap<String, ModelProviderInfo> {
                 stream_max_retries: None,
                 stream_idle_timeout_ms: None,
                 requires_openai_auth: true,
+            },
+        ),
+        (
+            ANTHROPIC_PROVIDER_ID,
+            P {
+                name: "Anthropic".into(),
+                base_url: Some("https://api.anthropic.com/v1".into()),
+                env_key: Some("ANTHROPIC_API_KEY".into()),
+                env_key_instructions: Some(
+                    "Get your API key from https://console.anthropic.com/settings/keys".into(),
+                ),
+                experimental_bearer_token: None,
+                wire_api: WireApi::Chat,
+                query_params: None,
+                http_headers: Some(
+                    [
+                        ("anthropic-version".to_string(), "2023-06-01".to_string()),
+                    ]
+                    .into_iter()
+                    .collect(),
+                ),
+                env_http_headers: None,
+                request_max_retries: None,
+                stream_max_retries: None,
+                stream_idle_timeout_ms: None,
+                requires_openai_auth: false,
+            },
+        ),
+        (
+            GOOGLE_PROVIDER_ID,
+            P {
+                name: "Google".into(),
+                base_url: Some("https://generativelanguage.googleapis.com/v1beta/openai".into()),
+                env_key: Some("GEMINI_API_KEY".into()),
+                env_key_instructions: Some(
+                    "Get your API key from https://aistudio.google.com/apikey".into(),
+                ),
+                experimental_bearer_token: None,
+                wire_api: WireApi::Chat,
+                query_params: None,
+                http_headers: None,
+                env_http_headers: None,
+                request_max_retries: None,
+                stream_max_retries: None,
+                stream_idle_timeout_ms: None,
+                requires_openai_auth: false,
             },
         ),
         (

@@ -76,6 +76,22 @@ pub(crate) fn get_model_info(model_family: &ModelFamily) -> Option<ModelInfo> {
 
         _ if slug.starts_with("codex-") => Some(ModelInfo::new(CONTEXT_WINDOW_272K)),
 
+        // Anthropic Claude models
+        // https://docs.anthropic.com/en/docs/about-claude/models
+        _ if slug.starts_with("claude-opus-4") || slug.starts_with("claude-sonnet-4") => {
+            Some(ModelInfo::new(200_000))
+        }
+        _ if slug.starts_with("claude-3-5") => Some(ModelInfo::new(200_000)),
+        _ if slug.starts_with("claude-3") => Some(ModelInfo::new(200_000)),
+
+        // Google Gemini models
+        // https://ai.google.dev/gemini-api/docs/models/gemini
+        _ if slug.starts_with("gemini-2") || slug.starts_with("gemini-3") => {
+            Some(ModelInfo::new(1_000_000))  // 1M context window
+        }
+        _ if slug.starts_with("gemini-1.5") => Some(ModelInfo::new(1_000_000)),
+        _ if slug.starts_with("gemini-") => Some(ModelInfo::new(128_000)),
+
         _ => None,
     }
 }
