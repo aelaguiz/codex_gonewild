@@ -22,6 +22,7 @@ use codex_protocol::models::ReasoningItemContent;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::protocol::SessionSource;
 use codex_protocol::protocol::SubAgentSource;
+use codex_protocol::protocol::TokenUsage;
 use eventsource_stream::Eventsource;
 use futures::Stream;
 use futures::StreamExt;
@@ -323,12 +324,20 @@ pub(crate) async fn stream_chat_completions(
                 status,
                 action,
             } => {
-                // Buffer local shell call as a tool call
-                pending_tool_calls.push(json!({
-                    "id": id.clone().unwrap_or_else(|| "".to_string()),
-                    "type": "local_shell_call",
+                // Buffer local shell call as a standard function call.
+                // Non-OpenAI providers (Gemini, Anthropic) reject type: "local_shell_call".
+                // Convert to type: "function" with shell details in arguments.
+                let shell_args = json!({
                     "status": status,
                     "action": action,
+                });
+                pending_tool_calls.push(json!({
+                    "id": id.clone().unwrap_or_else(|| "".to_string()),
+                    "type": "function",
+                    "function": {
+                        "name": "shell",
+                        "arguments": shell_args.to_string(),
+                    }
                 }));
                 // Collect reasoning for this item
                 if let Some(reasoning) = reasoning_by_anchor_index.get(&idx) {
@@ -385,13 +394,16 @@ pub(crate) async fn stream_chat_completions(
                 input,
                 status: _,
             } => {
-                // Buffer custom tool call
+                // Buffer custom tool call as a standard function call.
+                // Non-OpenAI providers (Gemini, Anthropic) reject type: "custom".
+                // Convert to type: "function" with input as arguments.
+                let args_str = serde_json::to_string(input).unwrap_or_else(|_| "{}".to_string());
                 pending_tool_calls.push(json!({
                     "id": id,
-                    "type": "custom",
-                    "custom": {
+                    "type": "function",
+                    "function": {
                         "name": name,
-                        "input": input,
+                        "arguments": args_str,
                     }
                 }));
             }
@@ -435,11 +447,21 @@ pub(crate) async fn stream_chat_completions(
     );
 
     let tools_json = create_tools_json_for_chat_completions_api(&prompt.tools)?;
+
+    // Use high max_tokens for thinking models like Gemini 3 Pro Preview.
+    // Thinking tokens are counted against max_tokens, so low values result in
+    // no actual response. Model limits:
+    //   - Gemini 3 Pro: 64,000 max output (thinking on by default)
+    //   - GPT-5.1: 128,000 max output (reasoning auto-routed)
+    //   - Claude Opus 4.5: 64,000 max output (extended thinking opt-in)
+    // Request usage data in streaming responses (supported by Gemini, OpenAI, etc.)
     let payload = json!({
         "model": model_family.slug,
         "messages": messages,
         "stream": true,
         "tools": tools_json,
+        "max_tokens": if model_family.slug.starts_with("gemini") { 64000 } else if model_family.slug.contains("claude-3-5") { 8192 } else { 4096 },
+        "stream_options": {"include_usage": true},
     });
 
     debug!(
@@ -630,6 +652,7 @@ async fn process_chat_sse<S>(
         std::collections::HashMap::new();
     let mut assistant_item: Option<ResponseItem> = None;
     let mut reasoning_item: Option<ResponseItem> = None;
+    let mut accumulated_usage: Option<TokenUsage> = None;
 
     loop {
         let start = std::time::Instant::now();
@@ -650,7 +673,7 @@ async fn process_chat_sse<S>(
                 let _ = tx_event
                     .send(Ok(ResponseEvent::Completed {
                         response_id: String::new(),
-                        token_usage: None,
+                        token_usage: accumulated_usage,
                     }))
                     .await;
                 return;
@@ -681,7 +704,7 @@ async fn process_chat_sse<S>(
             let _ = tx_event
                 .send(Ok(ResponseEvent::Completed {
                     response_id: String::new(),
-                    token_usage: None,
+                    token_usage: accumulated_usage,
                 }))
                 .await;
             return;
@@ -693,6 +716,30 @@ async fn process_chat_sse<S>(
             Err(_) => continue,
         };
         trace!("chat_completions received SSE chunk: {chunk:?}");
+
+        // Extract usage data if present (when stream_options.include_usage is set)
+        // Gemini/OpenAI format: {"usage": {"prompt_tokens": N, "completion_tokens": N, "total_tokens": N}}
+        if let Some(usage) = chunk.get("usage") {
+            let input_tokens = usage
+                .get("prompt_tokens")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(0);
+            let output_tokens = usage
+                .get("completion_tokens")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(0);
+            let total_tokens = usage
+                .get("total_tokens")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(0);
+            accumulated_usage = Some(TokenUsage {
+                input_tokens,
+                cached_input_tokens: 0,
+                output_tokens,
+                reasoning_output_tokens: 0,
+                total_tokens,
+            });
+        }
 
         let choice_opt = chunk.get("choices").and_then(|c| c.get(0));
 
@@ -922,7 +969,7 @@ async fn process_chat_sse<S>(
                 let _ = tx_event
                     .send(Ok(ResponseEvent::Completed {
                         response_id: String::new(),
-                        token_usage: None,
+                        token_usage: accumulated_usage,
                     }))
                     .await;
 
