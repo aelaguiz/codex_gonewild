@@ -1068,8 +1068,9 @@ impl Config {
 
         let mut model_providers = built_in_model_providers();
         // Merge user-defined providers into the built-in list.
+        // Use insert() to allow user config to override built-ins (e.g. for proxies)
         for (key, provider) in cfg.model_providers.into_iter() {
-            model_providers.entry(key).or_insert(provider);
+            model_providers.insert(key, provider);
         }
 
         // Determine model early so we can auto-select provider based on model name
