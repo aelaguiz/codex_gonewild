@@ -460,7 +460,7 @@ pub(crate) async fn stream_chat_completions(
         "messages": messages,
         "stream": true,
         "tools": tools_json,
-        "max_tokens": if model_family.slug.starts_with("gemini") { 64000 } else if model_family.slug.contains("claude-3-5") { 8192 } else { 4096 },
+        "max_tokens": if model_family.slug.starts_with("gemini") || model_family.slug.contains("claude-opus-4") { 64000 } else if model_family.slug.contains("claude-3-5") { 8192 } else { 4096 },
         "stream_options": {"include_usage": true},
     });
 
@@ -814,14 +814,66 @@ async fn process_chat_sse<S>(
                 .and_then(|tc| tc.as_array())
             {
                 for tool_call in tool_calls {
-                    // Get the index for this tool call (defaults to 0 for single calls).
-                    let index = tool_call
-                        .get("index")
+                    // === DIAGNOSTIC LOGGING: Capture raw index before resolution ===
+                    let raw_index = tool_call.get("index");
+                    let index = raw_index
                         .and_then(|v| v.as_i64())
-                        .unwrap_or(0);
+                        .unwrap_or_else(|| {
+                            // Missing index in parallel tool calls causes argument concatenation bugs.
+                            // This should not happen with compliant providers.
+                            tracing::warn!(
+                                raw_index_value = ?raw_index,
+                                chunk = ?tool_call,
+                                existing_keys = ?fn_call_states.keys().collect::<Vec<_>>(),
+                                "DIAG: Tool call chunk missing 'index' field, defaulting to 0"
+                            );
+                            0
+                        });
 
-                    // Get or create state for this tool call index.
-                    let fn_call_state = fn_call_states.entry(index).or_default();
+                    // Detect if we're about to concatenate two complete JSON objects.
+                    // This can cause bugs like {"foo":1}{"bar":2} which is invalid JSON.
+                    // If detected, find a new index slot to avoid corruption.
+                    let final_index = {
+                        let args_fragment = tool_call
+                            .get("function")
+                            .and_then(|f| f.get("arguments"))
+                            .and_then(|a| a.as_str());
+
+                        // Check if the existing state at this index has complete JSON
+                        let existing_state = fn_call_states.get(&index);
+                        let needs_new_slot = if let Some(state) = existing_state {
+                            if !state.arguments.is_empty() && state.arguments.ends_with('}') {
+                                // Check if new fragment starts a new JSON object
+                                if let Some(frag) = args_fragment {
+                                    frag.starts_with('{')
+                                } else {
+                                    false
+                                }
+                            } else {
+                                false
+                            }
+                        } else {
+                            false
+                        };
+
+                        if needs_new_slot {
+                            // Find the next available index slot
+                            let max_existing = fn_call_states.keys().copied().max().unwrap_or(-1);
+                            let new_index = max_existing + 1;
+                            tracing::warn!(
+                                "Detected JSON concatenation at index={}. Provider may be reusing indices \
+                                 for parallel tool calls to same function. Reassigning to index={}.",
+                                index,
+                                new_index
+                            );
+                            new_index
+                        } else {
+                            index
+                        }
+                    };
+
+                    // Get or create state for the final index.
+                    let fn_call_state = fn_call_states.entry(final_index).or_default();
 
                     // Extract call_id if present.
                     if let Some(id) = tool_call.get("id").and_then(|v| v.as_str()) {
@@ -838,6 +890,39 @@ async fn process_chat_sse<S>(
                         if let Some(args_fragment) =
                             function.get("arguments").and_then(|a| a.as_str())
                         {
+                            // === DIAGNOSTIC LOGGING: Check for intra-chunk concatenation ===
+                            // If the fragment itself contains "}{", the provider sent two JSON
+                            // objects in a single chunk - our boundary detection won't catch this.
+                            if args_fragment.contains("}{") {
+                                tracing::error!(
+                                    index = final_index,
+                                    fragment = args_fragment,
+                                    current_args = fn_call_state.arguments.as_str(),
+                                    "DIAG CRITICAL: Intra-chunk concatenation detected! Fragment contains '}}{{'"
+                                );
+                            }
+
+                            // === DIAGNOSTIC LOGGING: Log state before appending ===
+                            let current_len = fn_call_state.arguments.len();
+                            let current_tail: &str = if current_len > 30 {
+                                &fn_call_state.arguments[current_len - 30..]
+                            } else {
+                                &fn_call_state.arguments
+                            };
+
+                            // Check if we're about to create a boundary issue
+                            if !fn_call_state.arguments.is_empty()
+                                && fn_call_state.arguments.trim_end().ends_with('}')
+                            {
+                                tracing::warn!(
+                                    index = final_index,
+                                    current_tail = current_tail,
+                                    fragment_start = &args_fragment[..args_fragment.len().min(50)],
+                                    fragment_len = args_fragment.len(),
+                                    "DIAG: Appending to state that ends with '}}'. Potential concatenation!"
+                                );
+                            }
+
                             fn_call_state.arguments.push_str(args_fragment);
                         }
                     }
@@ -886,6 +971,20 @@ async fn process_chat_sse<S>(
                                     .name
                                     .clone()
                                     .unwrap_or_else(|| "".to_string());
+
+                                // === DIAGNOSTIC LOGGING: Check for concatenation at emission ===
+                                let args = &fn_call_state.arguments;
+                                if args.contains("}{") {
+                                    tracing::error!(
+                                        index,
+                                        name = emitted_name.as_str(),
+                                        call_id = emitted_call_id.as_str(),
+                                        args_len = args.len(),
+                                        args_preview = &args[..args.len().min(200)],
+                                        "DIAG CRITICAL: About to emit FunctionCall with concatenated JSON (contains '}}{{')!"
+                                    );
+                                }
+
                                 tracing::debug!(
                                     "Emitting FunctionCall: name={} call_id={} (was_some={})",
                                     emitted_name,
@@ -932,6 +1031,20 @@ async fn process_chat_sse<S>(
                                         .name
                                         .clone()
                                         .unwrap_or_else(|| "".to_string());
+
+                                    // === DIAGNOSTIC LOGGING: Check for concatenation at emission ===
+                                    let args = &fn_call_state.arguments;
+                                    if args.contains("}{") {
+                                        tracing::error!(
+                                            index,
+                                            name = emitted_name.as_str(),
+                                            call_id = emitted_call_id.as_str(),
+                                            args_len = args.len(),
+                                            args_preview = &args[..args.len().min(200)],
+                                            "DIAG CRITICAL: About to emit FunctionCall (stop) with concatenated JSON (contains '}}{{')!"
+                                        );
+                                    }
+
                                     tracing::debug!(
                                         "Emitting FunctionCall (stop): name={} call_id={} (was_some={})",
                                         emitted_name,
