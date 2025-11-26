@@ -903,12 +903,7 @@ async fn process_chat_sse<S>(
                             }
 
                             // === DIAGNOSTIC LOGGING: Log state before appending ===
-                            let current_len = fn_call_state.arguments.len();
-                            let current_tail: &str = if current_len > 30 {
-                                &fn_call_state.arguments[current_len - 30..]
-                            } else {
-                                &fn_call_state.arguments
-                            };
+                            let current_tail: &str = codex_utils_string::take_last_bytes_at_char_boundary(&fn_call_state.arguments, 30);
 
                             // Check if we're about to create a boundary issue
                             if !fn_call_state.arguments.is_empty()
