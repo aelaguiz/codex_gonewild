@@ -505,11 +505,10 @@ pub(crate) async fn stream_chat_completions(
         payload["tools"] = json!(tools_json);
     }
 
-    // stream_options is an OpenAI-specific feature for requesting token usage in stream.
-    // Non-OpenAI providers may reject unknown fields with 400 errors.
-    if is_openai_provider {
-        payload["stream_options"] = json!({"include_usage": true});
-    }
+    // stream_options requests token usage data in streaming responses.
+    // Required for context % tracking. Original code included this for all providers.
+    // If a provider doesn't support it, the field is typically ignored (not a 400 error).
+    payload["stream_options"] = json!({"include_usage": true});
 
     debug!(
         "POST to {}: {}",
