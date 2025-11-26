@@ -87,4 +87,9 @@ pub struct Cli {
 
     #[clap(skip)]
     pub config_overrides: CliConfigOverrides,
+
+    /// Enable verbose debug logging to stderr and log file.
+    /// Useful for diagnosing issues with the agent.
+    #[arg(long = "debug", default_value_t = false)]
+    pub debug: bool,
 }

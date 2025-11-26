@@ -259,10 +259,15 @@ pub async fn run_main(
     let (non_blocking, _guard) = non_blocking(log_file);
 
     // use RUST_LOG env var, default to info for codex crates.
+    // If --debug flag is set, use trace level for all codex crates.
     let env_filter = || {
-        EnvFilter::try_from_default_env().unwrap_or_else(|_| {
-            EnvFilter::new("codex_core=info,codex_tui=info,codex_rmcp_client=info")
-        })
+        if cli.debug {
+            EnvFilter::new("codex_core=trace,codex_tui=trace,codex_rmcp_client=trace,codex_protocol=debug")
+        } else {
+            EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+                EnvFilter::new("codex_core=info,codex_tui=info,codex_rmcp_client=info")
+            })
+        }
     };
 
     let file_layer = tracing_subscriber::fmt::layer()
@@ -322,6 +327,11 @@ pub async fn run_main(
             .with(feedback_layer)
             .try_init();
     };
+
+    if cli.debug {
+        eprintln!("DEBUG MODE ENABLED - verbose logs written to: {}", log_dir.join("codex-tui.log").display());
+        eprintln!("Tail the log file in another terminal: tail -f {}", log_dir.join("codex-tui.log").display());
+    }
 
     run_ratatui_app(
         cli,

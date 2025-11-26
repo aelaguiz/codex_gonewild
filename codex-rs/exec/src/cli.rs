@@ -91,6 +91,8 @@ pub struct Cli {
 pub enum Command {
     /// Resume a previous session by id or pick the most recent with --last.
     Resume(ResumeArgs),
+    /// Run multiple turns in a single session for testing multi-turn conversations.
+    MultiturnTest(MultiturnTestArgs),
 }
 
 #[derive(Parser, Debug)]
@@ -107,6 +109,13 @@ pub struct ResumeArgs {
     /// Prompt to send after resuming the session. If `-` is used, read from stdin.
     #[arg(value_name = "PROMPT", value_hint = clap::ValueHint::Other)]
     pub prompt: Option<String>,
+}
+
+#[derive(Parser, Debug)]
+pub struct MultiturnTestArgs {
+    /// Prompts to send sequentially (one per turn).
+    #[arg(value_name = "PROMPT", num_args = 1..)]
+    pub prompts: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, ValueEnum)]

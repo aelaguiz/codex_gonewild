@@ -56,6 +56,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::debug;
 use tracing::error;
 use tracing::info;
+use tracing::trace;
 use tracing::warn;
 
 use crate::ModelProviderInfo;
@@ -2176,12 +2177,14 @@ async fn try_run_turn(
     });
 
     sess.persist_rollout_items(&[rollout_item]).await;
+    trace!("TURN: Starting API stream request to model={}", turn_context.client.get_model());
     let mut stream = turn_context
         .client
         .clone()
         .stream(prompt)
         .or_cancel(&cancellation_token)
         .await??;
+    trace!("TURN: API stream connected successfully");
 
     let tool_runtime = ToolCallRuntime::new(
         Arc::clone(&router),

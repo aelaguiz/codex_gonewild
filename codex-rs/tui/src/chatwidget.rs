@@ -71,7 +71,7 @@ use ratatui::widgets::Paragraph;
 use ratatui::widgets::Wrap;
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::task::JoinHandle;
-use tracing::debug;
+use tracing::{debug, trace};
 
 use crate::app_event::AppEvent;
 use crate::app_event_sender::AppEventSender;
@@ -480,6 +480,7 @@ impl ChatWidget {
     // Raw reasoning uses the same flow as summarized reasoning
 
     fn on_task_started(&mut self) {
+        trace!("TASK_STARTED: Setting task_running=true");
         self.bottom_pane.clear_ctrl_c_quit_hint();
         self.bottom_pane.set_task_running(true);
         self.retry_status_header = None;
@@ -491,6 +492,7 @@ impl ChatWidget {
     }
 
     fn on_task_complete(&mut self, last_agent_message: Option<String>) {
+        trace!("TASK_COMPLETE: Setting task_running=false, queued_user_messages={}", self.queued_user_messages.len());
         // If a stream is currently active, finalize it.
         self.flush_answer_stream_with_separator();
         // Mark task stopped and request redraw now that all content is in history.
@@ -1614,15 +1616,20 @@ impl ChatWidget {
     }
 
     fn queue_user_message(&mut self, user_message: UserMessage) {
+        trace!("QUEUE_USER_MESSAGE: is_task_running={}, text_len={}",
+               self.bottom_pane.is_task_running(), user_message.text.len());
         if self.bottom_pane.is_task_running() {
+            trace!("QUEUING message (task is running), queue_size will be {}", self.queued_user_messages.len() + 1);
             self.queued_user_messages.push_back(user_message);
             self.refresh_queued_user_messages();
         } else {
+            trace!("SUBMITTING message immediately (no task running)");
             self.submit_user_message(user_message);
         }
     }
 
     fn submit_user_message(&mut self, user_message: UserMessage) {
+        trace!("SUBMIT_USER_MESSAGE: text_len={}", user_message.text.len());
         let UserMessage { text, image_paths } = user_message;
         if text.is_empty() && image_paths.is_empty() {
             return;

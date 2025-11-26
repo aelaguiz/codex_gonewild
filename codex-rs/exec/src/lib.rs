@@ -79,6 +79,12 @@ pub async fn run_main(cli: Cli, codex_linux_sandbox_exe: Option<PathBuf>) -> any
         config_overrides,
     } = cli;
 
+    // Extract prompts for multiturn test mode, or single prompt for other modes
+    let multiturn_prompts: Option<Vec<String>> = match &command {
+        Some(ExecCommand::MultiturnTest(args)) => Some(args.prompts.clone()),
+        _ => None,
+    };
+
     // Determine the prompt source (parent or subcommand) and read from stdin if needed.
     let prompt_arg = match &command {
         // Allow prompt before the subcommand by falling back to the parent-level prompt
@@ -97,6 +103,10 @@ pub async fn run_main(cli: Cli, codex_linux_sandbox_exe: Option<PathBuf>) -> any
                     }
                 });
             resume_prompt.or(prompt)
+        }
+        Some(ExecCommand::MultiturnTest(args)) => {
+            // Use first prompt for initial turn
+            args.prompts.first().cloned()
         }
         None => prompt,
     };
@@ -329,22 +339,25 @@ pub async fn run_main(cli: Cli, codex_linux_sandbox_exe: Option<PathBuf>) -> any
         conversation_id: _,
         conversation,
         session_configured,
-    } = if let Some(ExecCommand::Resume(args)) = command {
-        let resume_path = resolve_resume_path(&config, &args).await?;
+    } = match &command {
+        Some(ExecCommand::Resume(args)) => {
+            let resume_path = resolve_resume_path(&config, args).await?;
 
-        if let Some(path) = resume_path {
-            conversation_manager
-                .resume_conversation_from_rollout(config.clone(), path, auth_manager.clone())
-                .await?
-        } else {
+            if let Some(path) = resume_path {
+                conversation_manager
+                    .resume_conversation_from_rollout(config.clone(), path, auth_manager.clone())
+                    .await?
+            } else {
+                conversation_manager
+                    .new_conversation(config.clone())
+                    .await?
+            }
+        }
+        _ => {
             conversation_manager
                 .new_conversation(config.clone())
                 .await?
         }
-    } else {
-        conversation_manager
-            .new_conversation(config.clone())
-            .await?
     };
     // Print the effective configuration and prompt so users can see what Codex
     // is using.
@@ -391,55 +404,126 @@ pub async fn run_main(cli: Cli, codex_linux_sandbox_exe: Option<PathBuf>) -> any
         });
     }
 
-    // Package images and prompt into a single user input turn.
-    let mut items: Vec<UserInput> = images
-        .into_iter()
-        .map(|path| UserInput::LocalImage { path })
-        .collect();
-    items.push(UserInput::Text { text: prompt });
-    let initial_prompt_task_id = conversation
-        .submit(Op::UserTurn {
-            items,
-            cwd: default_cwd,
-            approval_policy: default_approval_policy,
-            sandbox_policy: default_sandbox_policy,
-            model: default_model,
-            effort: default_effort,
-            summary: default_summary,
-            final_output_json_schema: output_schema,
-        })
-        .await?;
-    info!("Sent prompt with event ID: {initial_prompt_task_id}");
+    // Build list of all prompts to process
+    let all_prompts: Vec<String> = if let Some(prompts) = multiturn_prompts {
+        prompts
+    } else {
+        vec![prompt]
+    };
 
-    // Run the loop until the task is complete.
     // Track whether a fatal error was reported by the server so we can
     // exit with a non-zero status for automation-friendly signaling.
     let mut error_seen = false;
-    while let Some(event) = rx.recv().await {
-        if let EventMsg::ElicitationRequest(ev) = &event.msg {
-            // Automatically cancel elicitation requests in exec mode.
-            conversation
-                .submit(Op::ResolveElicitation {
-                    server_name: ev.server_name.clone(),
-                    request_id: ev.id.clone(),
-                    decision: ElicitationAction::Cancel,
-                })
-                .await?;
+
+    // Process each prompt as a turn
+    for (turn_idx, turn_prompt) in all_prompts.iter().enumerate() {
+        #[allow(clippy::print_stderr)]
+        {
+            eprintln!("\n======== TURN {} ========", turn_idx + 1);
+            eprintln!("Prompt: {}", turn_prompt);
         }
-        if matches!(event.msg, EventMsg::Error(_)) {
-            error_seen = true;
+
+        // Package images (only for first turn) and prompt into a single user input turn.
+        let mut items: Vec<UserInput> = if turn_idx == 0 {
+            images
+                .iter()
+                .map(|path| UserInput::LocalImage { path: path.clone() })
+                .collect()
+        } else {
+            vec![]
+        };
+        items.push(UserInput::Text {
+            text: turn_prompt.clone(),
+        });
+
+        let task_id = conversation
+            .submit(Op::UserTurn {
+                items,
+                cwd: default_cwd.clone(),
+                approval_policy: default_approval_policy,
+                sandbox_policy: default_sandbox_policy.clone(),
+                model: default_model.clone(),
+                effort: default_effort,
+                summary: default_summary,
+                final_output_json_schema: output_schema.clone(),
+            })
+            .await?;
+        info!("Turn {}: Sent prompt with event ID: {task_id}", turn_idx + 1);
+
+        // Run the loop until this turn's task is complete
+        let mut turn_complete = false;
+        let is_last_turn = turn_idx == all_prompts.len() - 1;
+
+        while let Some(event) = rx.recv().await {
+            if let EventMsg::ElicitationRequest(ev) = &event.msg {
+                // Automatically cancel elicitation requests in exec mode.
+                conversation
+                    .submit(Op::ResolveElicitation {
+                        server_name: ev.server_name.clone(),
+                        request_id: ev.id.clone(),
+                        decision: ElicitationAction::Cancel,
+                    })
+                    .await?;
+            }
+            if matches!(event.msg, EventMsg::Error(_)) {
+                error_seen = true;
+                eprintln!("ERROR at turn {}", turn_idx + 1);
+            }
+
+            // Check for task complete before processing to detect turn end
+            let is_task_complete = matches!(event.msg, EventMsg::TaskComplete(_));
+
+            let shutdown: CodexStatus = event_processor.process_event(event);
+
+            // For multi-turn: TaskComplete triggers InitiateShutdown, but we intercept
+            // it for non-final turns to continue the conversation
+            if is_task_complete {
+                turn_complete = true;
+                eprintln!("Turn {} complete", turn_idx + 1);
+                if !is_last_turn {
+                    // Don't shutdown yet, we have more turns
+                    break;
+                }
+            }
+
+            match shutdown {
+                CodexStatus::Running => {
+                    continue;
+                }
+                CodexStatus::InitiateShutdown => {
+                    if is_last_turn {
+                        // Only shutdown on the final turn
+                        conversation.submit(Op::Shutdown).await?;
+                    }
+                    // For non-final turns, we already broke out above
+                }
+                CodexStatus::Shutdown => {
+                    break;
+                }
+            }
         }
-        let shutdown: CodexStatus = event_processor.process_event(event);
-        match shutdown {
-            CodexStatus::Running => continue,
-            CodexStatus::InitiateShutdown => {
-                conversation.submit(Op::Shutdown).await?;
-            }
-            CodexStatus::Shutdown => {
-                break;
-            }
+
+        if error_seen {
+            #[allow(clippy::print_stderr)]
+            eprintln!("FAILED at turn {} - exiting", turn_idx + 1);
+            break;
+        }
+
+        if !turn_complete {
+            eprintln!("Turn {} did not complete normally", turn_idx + 1);
+            break;
         }
     }
+
+    // Wait for shutdown to complete (the last turn already triggered it)
+    while let Some(event) = rx.recv().await {
+        let shutdown: CodexStatus = event_processor.process_event(event);
+        if matches!(shutdown, CodexStatus::Shutdown) {
+            break;
+        }
+    }
+
+    eprintln!("\n======== ALL TURNS COMPLETE ========");
     event_processor.print_final_output();
     if error_seen {
         std::process::exit(1);

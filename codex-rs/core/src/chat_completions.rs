@@ -448,21 +448,68 @@ pub(crate) async fn stream_chat_completions(
 
     let tools_json = create_tools_json_for_chat_completions_api(&prompt.tools)?;
 
-    // Use high max_tokens for thinking models like Gemini 3 Pro Preview.
-    // Thinking tokens are counted against max_tokens, so low values result in
-    // no actual response. Model limits:
-    //   - Gemini 3 Pro: 64,000 max output (thinking on by default)
-    //   - GPT-5.1: 128,000 max output (reasoning auto-routed)
-    //   - Claude Opus 4.5: 64,000 max output (extended thinking opt-in)
-    // Request usage data in streaming responses (supported by Gemini, OpenAI, etc.)
-    let payload = json!({
+    // Determine if this is an OpenAI provider vs Anthropic/Google.
+    // Non-OpenAI providers have different capabilities and restrictions:
+    // 1. Empty tools array may cause validation errors - omit if empty
+    // 2. max_tokens limits vary by provider and model
+    // 3. stream_options is an OpenAI-specific feature
+    let is_openai_provider = provider.name == "OpenAI";
+    let is_anthropic_provider = provider.name == "Anthropic";
+    let is_google_provider = provider.name == "Google";
+
+    // Use appropriate max_tokens for each provider/model combination.
+    // Thinking tokens are counted against max_tokens for thinking models.
+    // Model limits:
+    //   - Gemini 3 Pro: 1M context, 64K max output (thinking on by default)
+    //   - GPT-5.1: 272K input + 128K output = 400K total context
+    //   - Claude Opus 4.5: 200K context, 64K max output (thinking opt-in)
+    //   - Claude 3.5 Sonnet: 8,192 max output
+    //   - Claude 3 Opus: 4,096 max output
+    let max_tokens = if is_openai_provider {
+        // OpenAI GPT-5.1 supports up to 128K output
+        if model_family.slug.starts_with("o3") || model_family.slug.starts_with("o4") {
+            128_000
+        } else if model_family.slug.contains("gpt-5") {
+            128_000
+        } else {
+            64_000
+        }
+    } else if is_google_provider {
+        // Gemini 3 Pro: 64K max output
+        64_000
+    } else if is_anthropic_provider {
+        // Claude Opus 4.5 / Sonnet 4: 64K max output
+        if model_family.slug.contains("claude-opus-4") || model_family.slug.contains("claude-sonnet-4") {
+            64_000
+        } else if model_family.slug.contains("claude-3-5") {
+            8_192
+        } else {
+            4_096
+        }
+    } else {
+        // Default for unknown providers
+        4_096
+    };
+
+    // Build base payload
+    let mut payload = json!({
         "model": model_family.slug,
         "messages": messages,
         "stream": true,
-        "tools": tools_json,
-        "max_tokens": if model_family.slug.starts_with("gemini") || model_family.slug.contains("claude-opus-4") { 64000 } else if model_family.slug.contains("claude-3-5") { 8192 } else { 4096 },
-        "stream_options": {"include_usage": true},
+        "max_tokens": max_tokens,
     });
+
+    // Only include "tools" field if there are actually tools defined.
+    // Empty tools array causes validation errors on some providers (Anthropic, Google).
+    if !tools_json.is_empty() {
+        payload["tools"] = json!(tools_json);
+    }
+
+    // stream_options is an OpenAI-specific feature for requesting token usage in stream.
+    // Non-OpenAI providers may reject unknown fields with 400 errors.
+    if is_openai_provider {
+        payload["stream_options"] = json!({"include_usage": true});
+    }
 
     debug!(
         "POST to {}: {}",
