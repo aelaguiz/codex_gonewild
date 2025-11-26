@@ -917,7 +917,7 @@ async fn process_chat_sse<S>(
                                 tracing::warn!(
                                     index = final_index,
                                     current_tail = current_tail,
-                                    fragment_start = &args_fragment[..args_fragment.len().min(50)],
+                                    fragment_start = codex_utils_string::take_bytes_at_char_boundary(args_fragment, 50),
                                     fragment_len = args_fragment.len(),
                                     "DIAG: Appending to state that ends with '}}'. Potential concatenation!"
                                 );
@@ -980,7 +980,7 @@ async fn process_chat_sse<S>(
                                         name = emitted_name.as_str(),
                                         call_id = emitted_call_id.as_str(),
                                         args_len = args.len(),
-                                        args_preview = &args[..args.len().min(200)],
+                                        args_preview = codex_utils_string::take_bytes_at_char_boundary(args, 200),
                                         "DIAG CRITICAL: About to emit FunctionCall with concatenated JSON (contains '}}{{')!"
                                     );
                                 }
@@ -1040,7 +1040,7 @@ async fn process_chat_sse<S>(
                                             name = emitted_name.as_str(),
                                             call_id = emitted_call_id.as_str(),
                                             args_len = args.len(),
-                                            args_preview = &args[..args.len().min(200)],
+                                            args_preview = codex_utils_string::take_bytes_at_char_boundary(args, 200),
                                             "DIAG CRITICAL: About to emit FunctionCall (stop) with concatenated JSON (contains '}}{{')!"
                                         );
                                     }

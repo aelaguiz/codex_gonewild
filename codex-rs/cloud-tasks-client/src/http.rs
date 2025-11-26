@@ -723,7 +723,21 @@ mod api {
         if s.len() <= max {
             s.to_string()
         } else {
-            s[s.len() - max..].to_string()
+            // Take suffix at char boundary to avoid panics with multi-byte UTF-8
+            let mut start = s.len();
+            let mut used = 0usize;
+            for (i, ch) in s.char_indices().rev() {
+                let nb = ch.len_utf8();
+                if used + nb > max {
+                    break;
+                }
+                start = i;
+                used += nb;
+                if start == 0 {
+                    break;
+                }
+            }
+            s[start..].to_string()
         }
     }
 
@@ -746,7 +760,16 @@ mod api {
             .unwrap_or_else(|| "<unknown>".to_string());
         let head: String = patch.lines().take(20).collect::<Vec<&str>>().join("\n");
         let head_trunc = if head.len() > 800 {
-            format!("{}…", &head[..800])
+            // Truncate at char boundary to avoid panics with multi-byte UTF-8
+            let mut last_ok = 0;
+            for (i, ch) in head.char_indices() {
+                let nb = i + ch.len_utf8();
+                if nb > 800 {
+                    break;
+                }
+                last_ok = nb;
+            }
+            format!("{}…", &head[..last_ok])
         } else {
             head
         };

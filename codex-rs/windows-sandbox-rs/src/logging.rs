@@ -11,7 +11,16 @@ fn preview(command: &[String]) -> String {
     if joined.len() <= LOG_COMMAND_PREVIEW_LIMIT {
         joined
     } else {
-        joined[..LOG_COMMAND_PREVIEW_LIMIT].to_string()
+        // Truncate at char boundary to avoid panics with multi-byte UTF-8
+        let mut last_ok = 0;
+        for (i, ch) in joined.char_indices() {
+            let nb = i + ch.len_utf8();
+            if nb > LOG_COMMAND_PREVIEW_LIMIT {
+                break;
+            }
+            last_ok = nb;
+        }
+        joined[..last_ok].to_string()
     }
 }
 

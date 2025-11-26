@@ -1694,7 +1694,16 @@ fn pretty_lines_from_error(raw: &str) -> Vec<String> {
     if lines.len() == 1 {
         // Parsing yielded nothing; include a trimmed, short raw message tail for context.
         let tail = if raw.len() > 320 {
-            format!("{}…", &raw[..320])
+            // Truncate at char boundary to avoid panics with multi-byte UTF-8
+            let mut last_ok = 0;
+            for (i, ch) in raw.char_indices() {
+                let nb = i + ch.len_utf8();
+                if nb > 320 {
+                    break;
+                }
+                last_ok = nb;
+            }
+            format!("{}…", &raw[..last_ok])
         } else {
             raw.to_string()
         };
