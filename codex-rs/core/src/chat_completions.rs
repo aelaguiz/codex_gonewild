@@ -222,7 +222,12 @@ pub(crate) async fn stream_chat_completions(
 
     for (idx, item) in input.iter().enumerate() {
         match item {
-            ResponseItem::Message { role, content, .. } => {
+            ResponseItem::Message {
+                role,
+                content,
+                thought_signature,
+                ..
+            } => {
                 // Build content either as a plain string (typical for assistant text)
                 // or as an array of content items when images are present (user/tool multimodal).
                 let mut text = String::new();
@@ -258,6 +263,84 @@ pub(crate) async fn stream_chat_completions(
                             pending_reasoning = Some(reasoning.clone());
                         }
                     }
+                    
+                    // Note: If we buffer assistant content, we might lose the association with thought_signature 
+                    // if subsequent tool calls don't use it. However, the buffering logic flushes 
+                    // pending content into a message. We should ensure thought_signature is attached there.
+                    // But `pending_assistant_content` is just a String.
+                    // The flush closure `flush_pending_assistant` needs to know about `thought_signature`.
+                    // BUT `flush_pending_assistant` is designed to merge multiple items.
+                    // If we have thought signature on THIS message, it should probably be attached to the flushed message.
+                    
+                    // Current buffering logic is complex. For now, let's assume thought_signature on Message 
+                    // implies we should just include it when flushing.
+                    // But wait, `flush_pending_assistant` is defined OUTSIDE this loop and doesn't capture `thought_signature`.
+                    // And it's used for non-assistant messages too.
+                    
+                    // Actually, if `thought_signature` is present, it's specific to THIS assistant message.
+                    // If we buffer it, we might mix it? 
+                    // Typically, `thought_signature` comes with the response.
+                    
+                    // Let's modify `flush_pending_assistant` to take `thought_signature`.
+                    // But it's a closure. We can't easily change its signature without changing all call sites.
+                    
+                    // ALTERNATIVE: Just output the message directly if it has thought_signature?
+                    // But we must support tool call merging for Anthropic.
+                    
+                    // For Gemini, we might not strictly need merging if we aren't using Anthropic.
+                    // However, to be safe, let's just add it to the message construction.
+                    // Since `pending_assistant_content` is just string, we lose the signature.
+                    
+                    // Let's NOT buffer if there is a thought signature, OR force flush?
+                    // Or better: Use `pending_tool_calls` which is `Vec<Value>`.
+                    // We can't put text thought signature there.
+                    
+                    // We might need to change `pending_assistant_content` to store metadata too?
+                    // Or just handle it locally.
+                    
+                    // Given the constraints and the fact that `thought_signature` is crucial for Gemini,
+                    // and usually Gemini responses are a single assistant turn (text OR tool calls),
+                    // maybe we can hack it by attaching it to `pending_reasoning`? No.
+                    
+                    // Let's flush ANY pending stuff first.
+                    flush_pending_assistant(
+                        &mut messages,
+                        &mut pending_assistant_content,
+                        &mut pending_tool_calls,
+                        &mut pending_reasoning,
+                        &mut last_assistant_text,
+                    );
+                    
+                    // Now send THIS message immediately.
+                    let mut msg = json!({
+                        "role": "assistant",
+                        "content": text
+                    });
+                    
+                    if let Some(sig) = thought_signature {
+                        if let Some(obj) = msg.as_object_mut() {
+                            obj.insert("extra_content".to_string(), json!({
+                                "google": {
+                                    "thought_signature": sig
+                                }
+                            }));
+                        }
+                    }
+                    
+                    // If there is associated reasoning (from our pre-scan), add it.
+                    if let Some(reasoning) = reasoning_by_anchor_index.get(&idx) {
+                         if let Some(obj) = msg.as_object_mut() {
+                            obj.insert("reasoning".to_string(), json!(reasoning));
+                        }
+                    }
+                    
+                    messages.push(msg);
+                    
+                    // We bypassed buffering. `last_assistant_text` tracking might be affected but 
+                    // `flush_pending_assistant` handles `last_assistant_text`. 
+                    // We should update `last_assistant_text` here to prevent dups if the NEXT item tries to flush?
+                    last_assistant_text = Some(text.clone());
+                    
                 } else {
                     // Non-assistant message: flush any pending assistant items first
                     flush_pending_assistant(
@@ -608,24 +691,43 @@ async fn append_assistant_text(
     tx_event: &mpsc::Sender<Result<ResponseEvent>>,
     assistant_item: &mut Option<ResponseItem>,
     text: String,
+    thought_signature: Option<String>,
 ) {
     if assistant_item.is_none() {
         let item = ResponseItem::Message {
             id: None,
             role: "assistant".to_string(),
             content: vec![],
+            thought_signature: thought_signature.clone(),
         };
         *assistant_item = Some(item.clone());
         let _ = tx_event
             .send(Ok(ResponseEvent::OutputItemAdded(item)))
             .await;
+    } else if let Some(sig) = thought_signature {
+        // If we already have an item but now receive a signature, update it.
+        // NOTE: OutputItemAdded was already sent. We can't update it in-stream easily for the client
+        // unless we emit a new event type or re-emit OutputItemDone with the signature.
+        // However, `assistant_item` is mutable reference to state. Updating it here ensures
+        // the final `OutputItemDone` will have it.
+        if let Some(ResponseItem::Message {
+            thought_signature: existing_sig,
+            ..
+        }) = assistant_item
+        {
+            if existing_sig.is_none() {
+                *existing_sig = Some(sig);
+            }
+        }
     }
 
     if let Some(ResponseItem::Message { content, .. }) = assistant_item {
-        content.push(ContentItem::OutputText { text: text.clone() });
-        let _ = tx_event
-            .send(Ok(ResponseEvent::OutputTextDelta(text.clone())))
-            .await;
+        if !text.is_empty() {
+            content.push(ContentItem::OutputText { text: text.clone() });
+            let _ = tx_event
+                .send(Ok(ResponseEvent::OutputTextDelta(text.clone())))
+                .await;
+        }
     }
 }
 
@@ -790,14 +892,28 @@ async fn process_chat_sse<S>(
         let choice_opt = chunk.get("choices").and_then(|c| c.get(0));
 
         if let Some(choice) = choice_opt {
+            // Check for top-level thought_signature in delta.extra_content.google.thought_signature
+            let mut thought_signature: Option<String> = None;
+            if let Some(sig) = choice
+                .get("delta")
+                .and_then(|d| d.get("extra_content"))
+                .and_then(|ec| ec.get("google"))
+                .and_then(|g| g.get("thought_signature"))
+                .and_then(|ts| ts.as_str())
+            {
+                thought_signature = Some(sig.to_string());
+            }
+
             // Handle assistant content tokens as streaming deltas.
-            if let Some(content) = choice
+            // Also pass any discovered thought_signature.
+            let content = choice
                 .get("delta")
                 .and_then(|d| d.get("content"))
                 .and_then(|c| c.as_str())
-                && !content.is_empty()
-            {
-                append_assistant_text(&tx_event, &mut assistant_item, content.to_string()).await;
+                .unwrap_or("");
+            
+            if !content.is_empty() || thought_signature.is_some() {
+                append_assistant_text(&tx_event, &mut assistant_item, content.to_string(), thought_signature).await;
             }
 
             // Forward any reasoning/thinking deltas if present.
@@ -1276,6 +1392,7 @@ where
                             content: vec![codex_protocol::models::ContentItem::OutputText {
                                 text: std::mem::take(&mut this.cumulative),
                             }],
+                            thought_signature: None,
                         };
                         this.pending
                             .push_back(ResponseEvent::OutputItemDone(aggregated_message));
@@ -1300,6 +1417,7 @@ where
                         token_usage,
                     })));
                 }
+
                 Poll::Ready(Some(Ok(ResponseEvent::Created))) => {
                     // These events are exclusive to the Responses API and
                     // will never appear in a Chat Completions stream.

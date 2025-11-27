@@ -260,7 +260,8 @@ pub fn find_family_for_model(slug: &str) -> Option<ModelFamily> {
     } else if slug.starts_with("gemini-2") || slug.starts_with("gemini-3") {
         model_family!(
             slug, slug,
-            supports_reasoning_summaries: false,
+            supports_reasoning_summaries: true,
+            reasoning_summary_format: ReasoningSummaryFormat::Experimental,
             needs_special_apply_patch_instructions: true,
             apply_patch_tool_type: Some(ApplyPatchToolType::Freeform),
             shell_type: ConfigShellToolType::ShellCommand,

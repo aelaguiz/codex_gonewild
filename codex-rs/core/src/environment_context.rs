@@ -179,13 +179,14 @@ impl EnvironmentContext {
 }
 
 impl From<EnvironmentContext> for ResponseItem {
-    fn from(ec: EnvironmentContext) -> Self {
+    fn from(env: EnvironmentContext) -> Self {
         ResponseItem::Message {
             id: None,
             role: "user".to_string(),
             content: vec![ContentItem::InputText {
-                text: ec.serialize_to_xml(),
+                text: env.serialize_to_xml(),
             }],
+            thought_signature: None,
         }
     }
 }

@@ -271,6 +271,7 @@ fn build_compacted_history_with_limit(
             content: vec![ContentItem::InputText {
                 text: message.clone(),
             }],
+            thought_signature: None,
         });
     }
 
@@ -284,6 +285,7 @@ fn build_compacted_history_with_limit(
         id: None,
         role: "user".to_string(),
         content: vec![ContentItem::InputText { text: summary_text }],
+        thought_signature: None,
     });
 
     history

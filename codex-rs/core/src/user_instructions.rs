@@ -25,18 +25,25 @@ impl UserInstructions {
     }
 }
 
+impl std::fmt::Display for UserInstructions {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}{}\n\n<INSTRUCTIONS>\n{}\n</INSTRUCTIONS>",
+            USER_INSTRUCTIONS_PREFIX, self.directory, self.text
+        )
+    }
+}
+
 impl From<UserInstructions> for ResponseItem {
-    fn from(ui: UserInstructions) -> Self {
+    fn from(instructions: UserInstructions) -> Self {
         ResponseItem::Message {
             id: None,
             role: "user".to_string(),
             content: vec![ContentItem::InputText {
-                text: format!(
-                    "{USER_INSTRUCTIONS_PREFIX}{directory}\n\n<INSTRUCTIONS>\n{contents}\n</INSTRUCTIONS>",
-                    directory = ui.directory,
-                    contents = ui.text
-                ),
+                text: instructions.to_string(),
             }],
+            thought_signature: None,
         }
     }
 }
@@ -58,13 +65,14 @@ impl DeveloperInstructions {
 }
 
 impl From<DeveloperInstructions> for ResponseItem {
-    fn from(di: DeveloperInstructions) -> Self {
+    fn from(instructions: DeveloperInstructions) -> Self {
         ResponseItem::Message {
             id: None,
             role: "developer".to_string(),
             content: vec![ContentItem::InputText {
-                text: di.into_text(),
+                text: instructions.text,
             }],
+            thought_signature: None,
         }
     }
 }

@@ -113,6 +113,7 @@ pub(crate) async fn assess_command(
     let prompt = Prompt {
         input: vec![ResponseItem::Message {
             id: None,
+            thought_signature: None,
             role: "user".to_string(),
             content: vec![ContentItem::InputText { text: user_prompt }],
         }],

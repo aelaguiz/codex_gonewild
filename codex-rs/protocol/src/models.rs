@@ -53,6 +53,9 @@ pub enum ResponseItem {
         id: Option<String>,
         role: String,
         content: Vec<ContentItem>,
+        /// Gemini thought_signature - must be echoed back for thinking models.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        thought_signature: Option<String>,
     },
     Reasoning {
         #[serde(default, skip_serializing)]
@@ -185,6 +188,7 @@ impl From<ResponseInputItem> for ResponseItem {
                 role,
                 content,
                 id: None,
+                thought_signature: None,
             },
             ResponseInputItem::FunctionCallOutput { call_id, output } => {
                 Self::FunctionCallOutput { call_id, output }
