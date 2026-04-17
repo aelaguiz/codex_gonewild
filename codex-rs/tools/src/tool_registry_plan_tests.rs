@@ -89,6 +89,9 @@ fn test_full_toolset_specs_for_gpt5_codex_unified_exec_web_search() {
         create_write_stdin_tool(),
         create_update_plan_tool(),
         request_user_input_tool_spec(/*default_mode_request_user_input*/ false),
+        create_get_current_session_model_tool(),
+        create_list_available_models_tool(),
+        create_update_session_model_tool(),
         create_apply_patch_freeform_tool(),
         ToolSpec::WebSearch {
             external_web_access: Some(true),

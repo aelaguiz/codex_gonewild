@@ -80,6 +80,7 @@ pub(crate) fn build_specs_with_discoverable_tools(
     use crate::tools::handlers::CodeModeExecuteHandler;
     use crate::tools::handlers::CodeModeWaitHandler;
     use crate::tools::handlers::DynamicToolHandler;
+    use crate::tools::handlers::GetCurrentSessionModelHandler;
     use crate::tools::handlers::JsReplHandler;
     use crate::tools::handlers::JsReplResetHandler;
     use crate::tools::handlers::ListAvailableModelsHandler;
@@ -213,6 +214,9 @@ pub(crate) fn build_specs_with_discoverable_tools(
             }
             ToolHandlerKind::JsReplReset => {
                 builder.register_handler(handler.name, js_repl_reset_handler.clone());
+            }
+            ToolHandlerKind::GetCurrentSessionModel => {
+                builder.register_handler(handler.name, Arc::new(GetCurrentSessionModelHandler));
             }
             ToolHandlerKind::ListAvailableModels => {
                 builder.register_handler(handler.name, Arc::new(ListAvailableModelsHandler));

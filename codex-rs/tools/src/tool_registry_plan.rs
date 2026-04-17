@@ -25,6 +25,7 @@ use crate::create_close_agent_tool_v2;
 use crate::create_code_mode_tool;
 use crate::create_exec_command_tool;
 use crate::create_followup_task_tool;
+use crate::create_get_current_session_model_tool;
 use crate::create_image_generation_tool;
 use crate::create_js_repl_reset_tool;
 use crate::create_js_repl_tool;
@@ -216,6 +217,16 @@ pub fn build_tool_registry_plan(
         config.code_mode_enabled,
     );
     plan.register_handler("update_plan", ToolHandlerKind::Plan);
+
+    plan.push_spec(
+        create_get_current_session_model_tool(),
+        /*supports_parallel_tool_calls*/ false,
+        config.code_mode_enabled,
+    );
+    plan.register_handler(
+        "get_current_session_model",
+        ToolHandlerKind::GetCurrentSessionModel,
+    );
 
     plan.push_spec(
         create_list_available_models_tool(),

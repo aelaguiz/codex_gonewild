@@ -46,6 +46,7 @@ pub use mcp_resource::McpResourceHandler;
 pub use plan::PlanHandler;
 pub use request_permissions::RequestPermissionsHandler;
 pub use request_user_input::RequestUserInputHandler;
+pub use session_model::GetCurrentSessionModelHandler;
 pub use session_model::ListAvailableModelsHandler;
 pub use session_model::UpdateSessionModelHandler;
 pub use shell::ShellCommandHandler;

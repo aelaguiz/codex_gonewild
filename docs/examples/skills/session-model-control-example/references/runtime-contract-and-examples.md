@@ -1,6 +1,6 @@
 # Runtime Contract And Examples
 
-This example skill is review-first. It shows the intended in-skill workflow for listing and changing the current root session's model and reasoning effort without inventing a second source of truth.
+This example skill is review-first. It shows the intended in-skill workflow for checking the current root session model and reasoning effort, listing valid choices, and changing the current root session without inventing a second source of truth.
 
 Skills are not executable host-side functions. The runtime exposes model-visible built-in tools, the model sees those tools in its tool list for the turn, and this skill tells the model when to call them.
 
@@ -20,12 +20,15 @@ Do not use this skill to manage spawned agents, change providers, or edit config
 
 This skill assumes the host exposes two runtime surfaces to the model:
 
-1. A built-in read tool, `list_available_models`, backed by the live model catalog (`model/list` or the same underlying truth), that returns, for each model:
+1. A built-in current-state read tool, `get_current_session_model`, that returns:
+   - current model
+   - current reasoning effort
+2. A built-in catalog-read tool, `list_available_models`, backed by the live model catalog (`model/list` or the same underlying truth), that returns, for each model:
    - model slug
    - display name
    - default reasoning effort
    - supported reasoning efforts
-2. A built-in root-thread mutation tool:
+3. A built-in root-thread mutation tool:
    - `update_session_model`
 
 If either surface is missing, the correct behavior is to fail loud and say what is unavailable.
@@ -33,6 +36,7 @@ If either surface is missing, the correct behavior is to fail loud and say what 
 ## Decision rules
 
 - Catalog is the authority for valid models and supported reasoning efforts.
+- `get_current_session_model` is the explicit authority for what the root session is using right now.
 - The skill should never invent or normalize an effort silently.
 - If the user requests `model + reasoning_effort`, validate the exact pair before mutating.
 - If the user requests only `model`, call `update_session_model` with only `model`.
@@ -45,7 +49,18 @@ If either surface is missing, the correct behavior is to fail loud and say what 
 
 ## Example interactions
 
-### Example 1: list valid choices
+### Example 1: read current settings
+
+User ask:
+
+`What model and thinking level is this session using right now?`
+
+Expected behavior:
+
+1. Call `get_current_session_model`.
+2. Return the current model and current reasoning effort directly.
+
+### Example 2: list valid choices
 
 User ask:
 
@@ -58,7 +73,7 @@ Expected behavior:
    - `gpt-5.4` — default `medium`; supports `low`, `medium`, `high`
    - `gpt-5.2-codex` — default `medium`; supports `minimal`, `low`, `medium`
 
-### Example 2: exact change
+### Example 3: exact change
 
 User ask:
 
@@ -73,7 +88,7 @@ Expected behavior:
    - `reasoning_effort: "high"`
 4. Report the applied pair and whether the active in-flight turn keeps the old settings.
 
-### Example 3: model-only change that fails on carried effort
+### Example 4: model-only change that fails on carried effort
 
 User ask:
 
@@ -85,7 +100,7 @@ Expected behavior:
 2. Call `update_session_model` with only the new model.
 3. If the runtime rejects because the current carried-over effort is unsupported, reply with the exact valid efforts for `gpt-5.2-codex` and do not silently pick one.
 
-### Example 4: derived explicit choice
+### Example 5: derived explicit choice
 
 User ask:
 

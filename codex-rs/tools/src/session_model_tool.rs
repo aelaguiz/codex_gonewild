@@ -5,6 +5,7 @@ use serde_json::json;
 use std::collections::BTreeMap;
 
 pub const LIST_AVAILABLE_MODELS_TOOL_NAME: &str = "list_available_models";
+pub const GET_CURRENT_SESSION_MODEL_TOOL_NAME: &str = "get_current_session_model";
 pub const UPDATE_SESSION_MODEL_TOOL_NAME: &str = "update_session_model";
 
 pub fn create_list_available_models_tool() -> ToolSpec {
@@ -22,6 +23,18 @@ pub fn create_list_available_models_tool() -> ToolSpec {
         strict: false,
         defer_loading: None,
         parameters: JsonSchema::object(properties, /*required*/ None, Some(false.into())),
+        output_schema: None,
+    })
+}
+
+pub fn create_get_current_session_model_tool() -> ToolSpec {
+    ToolSpec::Function(ResponsesApiTool {
+        name: GET_CURRENT_SESSION_MODEL_TOOL_NAME.to_string(),
+        description: "Return the current root session's active model and reasoning effort."
+            .to_string(),
+        strict: false,
+        defer_loading: None,
+        parameters: JsonSchema::object(BTreeMap::new(), /*required*/ None, Some(false.into())),
         output_schema: None,
     })
 }
@@ -90,6 +103,26 @@ mod tests {
                                 .to_string(),
                         )),
                     )]),
+                    /*required*/ None,
+                    Some(false.into()),
+                ),
+                output_schema: None,
+            })
+        );
+    }
+
+    #[test]
+    fn get_current_session_model_tool_spec_is_stable() {
+        assert_eq!(
+            create_get_current_session_model_tool(),
+            ToolSpec::Function(ResponsesApiTool {
+                name: GET_CURRENT_SESSION_MODEL_TOOL_NAME.to_string(),
+                description: "Return the current root session's active model and reasoning effort."
+                    .to_string(),
+                strict: false,
+                defer_loading: None,
+                parameters: JsonSchema::object(
+                    BTreeMap::new(),
                     /*required*/ None,
                     Some(false.into()),
                 ),

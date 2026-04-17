@@ -12,10 +12,20 @@ use codex_protocol::openai_models::ReasoningEffort;
 use codex_protocol::openai_models::ReasoningEffortPreset;
 use codex_protocol::protocol::SessionModelUpdateSource;
 use codex_protocol::protocol::SessionSource;
+use codex_tools::GET_CURRENT_SESSION_MODEL_TOOL_NAME;
 use codex_tools::LIST_AVAILABLE_MODELS_TOOL_NAME;
 use codex_tools::UPDATE_SESSION_MODEL_TOOL_NAME;
 use serde::Deserialize;
 use serde::Serialize;
+
+#[derive(Deserialize)]
+struct GetCurrentSessionModelArgs {}
+
+#[derive(Serialize)]
+struct GetCurrentSessionModelResult {
+    model: String,
+    reasoning_effort: Option<ReasoningEffort>,
+}
 
 #[derive(Deserialize)]
 struct ListAvailableModelsArgs {
@@ -62,6 +72,44 @@ struct UpdateSessionModelResult {
 }
 
 pub struct ListAvailableModelsHandler;
+
+pub struct GetCurrentSessionModelHandler;
+
+impl ToolHandler for GetCurrentSessionModelHandler {
+    type Output = FunctionToolOutput;
+
+    fn kind(&self) -> ToolKind {
+        ToolKind::Function
+    }
+
+    async fn handle(&self, invocation: ToolInvocation) -> Result<Self::Output, FunctionCallError> {
+        let ToolInvocation {
+            session,
+            turn,
+            payload,
+            ..
+        } = invocation;
+
+        let arguments = match payload {
+            ToolPayload::Function { arguments } => arguments,
+            _ => {
+                return Err(FunctionCallError::RespondToModel(format!(
+                    "{GET_CURRENT_SESSION_MODEL_TOOL_NAME} handler received unsupported payload"
+                )));
+            }
+        };
+
+        reject_subagent_thread(&turn.session_source, GET_CURRENT_SESSION_MODEL_TOOL_NAME)?;
+
+        let _args: GetCurrentSessionModelArgs = parse_arguments(&arguments)?;
+        let collaboration_mode = session.collaboration_mode().await;
+        let result = GetCurrentSessionModelResult {
+            model: collaboration_mode.model().to_string(),
+            reasoning_effort: collaboration_mode.reasoning_effort(),
+        };
+        serialize_tool_result(result, GET_CURRENT_SESSION_MODEL_TOOL_NAME)
+    }
+}
 
 impl ToolHandler for ListAvailableModelsHandler {
     type Output = FunctionToolOutput;
@@ -238,6 +286,69 @@ mod tests {
     use serde_json::json;
     use std::sync::Arc;
     use tokio::sync::Mutex;
+
+    #[tokio::test]
+    async fn get_current_session_model_returns_live_settings() {
+        let (session, turn) = make_session_and_context().await;
+        let collaboration_mode = session.collaboration_mode().await;
+        let expected_model = collaboration_mode.model().to_string();
+        let expected_reasoning_effort = serde_json::to_value(collaboration_mode.reasoning_effort())
+            .expect("reasoning effort should serialize");
+
+        let result = GetCurrentSessionModelHandler
+            .handle(ToolInvocation {
+                session: Arc::new(session),
+                turn: Arc::new(turn),
+                tracker: Arc::new(Mutex::new(TurnDiffTracker::default())),
+                call_id: "call-1".to_string(),
+                tool_name: codex_tools::ToolName::plain(GET_CURRENT_SESSION_MODEL_TOOL_NAME),
+                payload: ToolPayload::Function {
+                    arguments: json!({}).to_string(),
+                },
+            })
+            .await
+            .expect("current session model read should succeed");
+
+        let value: serde_json::Value =
+            serde_json::from_str(&result.into_text()).expect("json response");
+        assert_eq!(value["model"], json!(expected_model));
+        assert_eq!(value["reasoning_effort"], expected_reasoning_effort);
+    }
+
+    #[tokio::test]
+    async fn get_current_session_model_rejects_subagent_threads() {
+        let (session, mut turn) = make_session_and_context().await;
+        turn.session_source = SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+            parent_thread_id: ThreadId::new(),
+            depth: 1,
+            agent_path: None,
+            agent_nickname: None,
+            agent_role: None,
+        });
+
+        let result = GetCurrentSessionModelHandler
+            .handle(ToolInvocation {
+                session: Arc::new(session),
+                turn: Arc::new(turn),
+                tracker: Arc::new(Mutex::new(TurnDiffTracker::default())),
+                call_id: "call-1".to_string(),
+                tool_name: codex_tools::ToolName::plain(GET_CURRENT_SESSION_MODEL_TOOL_NAME),
+                payload: ToolPayload::Function {
+                    arguments: json!({}).to_string(),
+                },
+            })
+            .await;
+
+        let Err(err) = result else {
+            panic!("sub-agent get_current_session_model should fail");
+        };
+        assert_eq!(
+            err,
+            FunctionCallError::RespondToModel(
+                "get_current_session_model can only be used by the root thread".to_string(),
+            )
+        );
+    }
 
     #[tokio::test]
     async fn list_available_models_rejects_subagent_threads() {

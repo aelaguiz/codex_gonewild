@@ -32,7 +32,7 @@ Reuse the existing live-session settings override path as the canonical owner. S
 Plan
 
 1. Research and deep-dive the existing settings owner path, thread persistence, and rendering surfaces.
-2. Add model-visible built-in tools for this workflow: `list_available_models` for catalog reads and `update_session_model` for root-thread writes, plus matching `thread/model/set` and `thread/model/updated` protocol coverage on the non-agent client side.
+2. Add model-visible built-in tools for this workflow: `list_available_models` for catalog reads and `update_session_model` for root-thread writes, plus matching `thread/model/set` and `thread/model/updated` protocol coverage on the non-agent client side. Follow-on branch work later added `get_current_session_model` as the dedicated explicit current-state read tool while preserving the existing `list_available_models` shape for compatibility.
 3. Wire TUI, app-server, SDK, and MCP-facing surfaces to the same operation and add tests proving live updates stay visible and persisted correctly.
 
 Non-negotiables
@@ -331,11 +331,13 @@ This is additive exposure of existing runtime truth, not a second settings syste
 
 1. Skill / tool path
    - Skills do not call Rust methods or app-server RPCs directly. They are prompt instructions that tell the model when to use model-visible built-in tools.
-   - For this workflow, the model must see `list_available_models` and `update_session_model` in its tool list.
+   - For this workflow, the model must see `get_current_session_model`, `list_available_models`, and `update_session_model` in its tool list.
+   - A skill calls `get_current_session_model` when it needs the current root session's active model and reasoning effort.
    - A skill calls `list_available_models` when it needs runtime truth about valid models and supported reasoning efforts for the current session.
    - A skill calls `update_session_model` with at least one of `model` or `reasoning_effort` when it needs to change the root session.
+   - `get_current_session_model` is the narrow explicit current-state surface for skills.
    - `list_available_models` is a read-only built-in wrapper over the same live catalog truth already surfaced to external clients through `model/list`; it is not a second catalog.
-   - `list_available_models` returns the current session's visible models, each model's default reasoning effort, and each model's supported reasoning efforts.
+   - `list_available_models` returns the current session's visible models, each model's default reasoning effort, and each model's supported reasoning efforts, and it preserves its current-state fields for compatibility with the earlier branch implementation.
    - The handler rejects subagents and non-root sessions, reuses existing parsing/validation patterns, and forwards a `SessionSettingsUpdate` into the canonical core owner path.
    - The tool returns structured success output containing the applied `model`, applied `reasoning_effort`, and an explicit flag that the current in-flight turn, if any, keeps its previous model and reasoning settings.
 
@@ -368,7 +370,8 @@ This is additive exposure of existing runtime truth, not a second settings syste
   - `SessionSettingsUpdate` -> central apply-and-emit helper in `codex-rs/core/src/codex.rs` -> `Session::update_settings()` -> `SessionModelUpdated`.
 - Root-thread boundary:
   - Skills themselves never invoke host-side Rust methods or app-server RPCs directly; they instruct the model to use built-in tools that the runtime exposed in the prompt for that turn.
-  - `list_available_models` and `update_session_model` are the model-visible built-in tools for this skill workflow.
+  - `get_current_session_model`, `list_available_models`, and `update_session_model` are the model-visible built-in tools for this skill workflow.
+  - `get_current_session_model` is the explicit current-state read tool; `list_available_models` remains the broad catalog tool and keeps its current-state fields for compatibility.
   - `update_session_model` is root-thread-only, following the same boundary style as `request_user_input`.
   - Subagents keep their own model/reasoning controls through their existing spawn configuration and must not mutate the parent thread directly through this tool.
 - Validation boundary:
@@ -700,3 +703,4 @@ will use gpt-5.2-codex low
 - Consistency pass resolved the last plan-shaping ambiguity: when a caller changes model without explicitly providing effort, Codex preserves the current reasoning setting only if the pair remains valid; otherwise the mutation fails loudly and requires an explicit compatible effort or explicit clear. No auto-normalization fallback is approved.
 - Consistency pass clarified that the active-turn carry-forward contract always covers both model and reasoning settings, not model alone.
 - Clarification pass made the invocation boundary explicit: skills are instruction text only, while the runtime exposes model-visible built-in tools that the model sees and calls. For this workflow, that means `list_available_models` for reads and `update_session_model` for writes on the model side, with `model/list` and `thread/model/set` remaining the client-facing RPC surfaces.
+- 2026-04-17 follow-on: the branch's final skill-facing tool family is additive rather than replacing prior contracts: `get_current_session_model` for explicit current-state reads, `list_available_models` for catalog reads, and `update_session_model` for writes, while external clients still use `model/list` and `thread/model/set`.

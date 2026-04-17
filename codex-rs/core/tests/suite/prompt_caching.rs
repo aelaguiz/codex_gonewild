@@ -175,6 +175,9 @@ async fn prompt_tools_are_consistent_across_requests() -> anyhow::Result<()> {
     };
     expected_tools_names.extend([
         "update_plan",
+        "get_current_session_model",
+        "list_available_models",
+        "update_session_model",
         "request_user_input",
         "apply_patch",
         "web_search",

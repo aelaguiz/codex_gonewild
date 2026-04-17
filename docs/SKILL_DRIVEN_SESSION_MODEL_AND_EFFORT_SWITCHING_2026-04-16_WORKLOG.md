@@ -32,3 +32,11 @@ Plan doc: [SKILL_DRIVEN_SESSION_MODEL_AND_EFFORT_SWITCHING_2026-04-16.md](/Users
   - `codex-app-server`
   - `codex-mcp-server`
 - The first broad run exposed only stale app-server schema fixtures; that was repaired by regenerating the schema before rerunning the backend sweep.
+
+## 2026-04-17 follow-on
+- Added the dedicated skill-visible current-state read tool `get_current_session_model` while preserving the existing `list_available_models` response shape for compatibility.
+- Updated the evergreen skill-facing docs and example skill package to the final three-tool story:
+  - `get_current_session_model`
+  - `list_available_models`
+  - `update_session_model`
+- Updated the branch-history plan/worklog narrative so the full branch truth no longer freezes the earlier two-tool-only story.
