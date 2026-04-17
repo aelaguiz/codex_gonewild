@@ -76,6 +76,7 @@ use codex_app_server_protocol::ServerRequestPayload;
 use codex_app_server_protocol::SkillsChangedNotification;
 use codex_app_server_protocol::TerminalInteractionNotification;
 use codex_app_server_protocol::ThreadItem;
+use codex_app_server_protocol::ThreadModelUpdatedNotification;
 use codex_app_server_protocol::ThreadNameUpdatedNotification;
 use codex_app_server_protocol::ThreadRealtimeClosedNotification;
 use codex_app_server_protocol::ThreadRealtimeErrorNotification;
@@ -362,6 +363,23 @@ pub(crate) async fn apply_bespoke_event_handling(
                 };
                 outgoing
                     .send_server_notification(ServerNotification::ModelRerouted(notification))
+                    .await;
+            }
+        }
+        EventMsg::SessionModelUpdated(event) => {
+            if let ApiVersion::V2 = api_version {
+                let notification = ThreadModelUpdatedNotification {
+                    thread_id: conversation_id.to_string(),
+                    previous_model: event.previous_model,
+                    model: event.model,
+                    previous_reasoning_effort: event.previous_reasoning_effort,
+                    reasoning_effort: event.reasoning_effort,
+                    source: event.source.into(),
+                    current_turn_keeps_previous_model_and_reasoning: event
+                        .current_turn_keeps_previous_model_and_reasoning,
+                };
+                outgoing
+                    .send_server_notification(ServerNotification::ThreadModelUpdated(notification))
                     .await;
             }
         }

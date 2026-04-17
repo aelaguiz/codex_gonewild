@@ -2076,6 +2076,52 @@ impl ChatWidget {
         self.on_session_configured(thread_session_state_to_legacy_event(session));
     }
 
+    fn on_session_model_updated(
+        &mut self,
+        previous_model: String,
+        model: String,
+        previous_reasoning_effort: Option<ReasoningEffortConfig>,
+        reasoning_effort: Option<ReasoningEffortConfig>,
+        current_turn_keeps_previous_model_and_reasoning: bool,
+    ) {
+        self.current_collaboration_mode = self.current_collaboration_mode.with_updates(
+            Some(model.clone()),
+            Some(reasoning_effort),
+            /*developer_instructions*/ None,
+        );
+        if let Some(mask) = self.active_collaboration_mask.as_mut() {
+            mask.model = Some(model.clone());
+            mask.reasoning_effort = Some(reasoning_effort);
+        }
+        self.refresh_model_dependent_surfaces();
+
+        let previous_display = if previous_model.starts_with("codex-auto-") {
+            previous_model
+        } else {
+            format!(
+                "{previous_model} {}",
+                Self::status_line_reasoning_effort_label(previous_reasoning_effort)
+            )
+        };
+        let next_display = if model.starts_with("codex-auto-") {
+            model
+        } else {
+            format!(
+                "{model} {}",
+                Self::status_line_reasoning_effort_label(reasoning_effort)
+            )
+        };
+        let mut message =
+            format!("Session model changed from {previous_display} to {next_display}.");
+        if current_turn_keeps_previous_model_and_reasoning {
+            message.push_str(
+                " The current turn keeps the previous model and reasoning until it finishes.",
+            );
+        }
+        self.add_info_message(message, /*hint*/ None);
+        self.request_redraw();
+    }
+
     fn emit_forked_thread_event(&self, forked_from_id: ThreadId) {
         let app_event_tx = self.app_event_tx.clone();
         let codex_home = self.config.codex_home.clone();
@@ -6129,6 +6175,13 @@ impl ChatWidget {
                     }
                 }
             }
+            ServerNotification::ThreadModelUpdated(notification) => self.on_session_model_updated(
+                notification.previous_model,
+                notification.model,
+                notification.previous_reasoning_effort,
+                notification.reasoning_effort,
+                notification.current_turn_keeps_previous_model_and_reasoning,
+            ),
             ServerNotification::TurnStarted(notification) => {
                 self.last_turn_id = Some(notification.turn.id);
                 self.last_non_retry_error = None;
@@ -6658,6 +6711,13 @@ impl ChatWidget {
 
         match msg {
             EventMsg::SessionConfigured(e) => self.on_session_configured(e),
+            EventMsg::SessionModelUpdated(e) => self.on_session_model_updated(
+                e.previous_model,
+                e.model,
+                e.previous_reasoning_effort,
+                e.reasoning_effort,
+                e.current_turn_keeps_previous_model_and_reasoning,
+            ),
             EventMsg::ThreadNameUpdated(e) => self.on_thread_name_updated(e),
             // NOTE: All three AgentMessage arms feed `record_agent_markdown` even
             // when the message is otherwise not rendered (thread-snapshot replay,

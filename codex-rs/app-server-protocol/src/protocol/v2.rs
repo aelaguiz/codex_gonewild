@@ -3348,6 +3348,33 @@ pub struct ThreadReadResponse {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "v2/")]
+pub struct ThreadModelSetParams {
+    pub thread_id: String,
+    #[ts(optional = nullable)]
+    pub model: Option<String>,
+    #[serde(
+        default,
+        deserialize_with = "super::serde_helpers::deserialize_double_option",
+        serialize_with = "super::serde_helpers::serialize_double_option",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[ts(optional = nullable)]
+    pub reasoning_effort: Option<Option<ReasoningEffort>>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct ThreadModelSetResponse {
+    pub thread_id: String,
+    pub model: String,
+    pub reasoning_effort: Option<ReasoningEffort>,
+    pub current_turn_keeps_previous_model_and_reasoning: bool,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
 pub struct SkillsListParams {
     /// When empty, defaults to the current session working directory.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -6552,6 +6579,38 @@ pub struct ModelReroutedNotification {
     pub from_model: String,
     pub to_model: String,
     pub reason: ModelRerouteReason,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export_to = "v2/")]
+pub enum SessionModelUpdateSource {
+    Manual,
+    Tool,
+    AppServer,
+}
+
+impl From<codex_protocol::protocol::SessionModelUpdateSource> for SessionModelUpdateSource {
+    fn from(value: codex_protocol::protocol::SessionModelUpdateSource) -> Self {
+        match value {
+            codex_protocol::protocol::SessionModelUpdateSource::Manual => Self::Manual,
+            codex_protocol::protocol::SessionModelUpdateSource::Tool => Self::Tool,
+            codex_protocol::protocol::SessionModelUpdateSource::AppServer => Self::AppServer,
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct ThreadModelUpdatedNotification {
+    pub thread_id: String,
+    pub previous_model: String,
+    pub model: String,
+    pub previous_reasoning_effort: Option<ReasoningEffort>,
+    pub reasoning_effort: Option<ReasoningEffort>,
+    pub source: SessionModelUpdateSource,
+    pub current_turn_keeps_previous_model_and_reasoning: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]

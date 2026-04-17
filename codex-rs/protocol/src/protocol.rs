@@ -1476,6 +1476,9 @@ pub enum EventMsg {
     /// Ack the client's configure message.
     SessionConfigured(SessionConfiguredEvent),
 
+    /// Post-start session model and reasoning settings changed.
+    SessionModelUpdated(SessionModelUpdatedEvent),
+
     /// Updated session metadata (e.g., thread name changes).
     ThreadNameUpdated(ThreadNameUpdatedEvent),
 
@@ -3551,6 +3554,35 @@ pub struct SessionConfiguredEvent {
     /// Path in which the rollout is stored. Can be `None` for ephemeral threads
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rollout_path: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(rename_all = "snake_case")]
+pub enum SessionModelUpdateSource {
+    Manual,
+    Tool,
+    AppServer,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq, JsonSchema, TS)]
+pub struct SessionModelUpdatedEvent {
+    /// Previous model before the post-start settings update.
+    pub previous_model: String,
+    /// Model now configured for the session's next request / turn.
+    pub model: String,
+    /// Previous reasoning effort before the post-start settings update.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub previous_reasoning_effort: Option<ReasoningEffortConfig>,
+    /// Reasoning effort now configured for the session's next request / turn.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub reasoning_effort: Option<ReasoningEffortConfig>,
+    /// Where the live settings change originated.
+    pub source: SessionModelUpdateSource,
+    /// When true, the current in-flight turn keeps its previous model and reasoning settings.
+    pub current_turn_keeps_previous_model_and_reasoning: bool,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, TS)]

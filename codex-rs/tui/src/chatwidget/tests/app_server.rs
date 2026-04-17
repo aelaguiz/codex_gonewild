@@ -46,6 +46,56 @@ async fn collab_spawn_end_shows_requested_model_and_effort() {
 }
 
 #[tokio::test]
+async fn live_core_session_model_update_refreshes_model_state() {
+    let (mut chat, mut rx, _ops) = make_chatwidget_manual(/*model_override*/ None).await;
+    let thread_id = ThreadId::new();
+    chat.handle_codex_event(Event {
+        id: "session-configured".into(),
+        msg: EventMsg::SessionConfigured(codex_protocol::protocol::SessionConfiguredEvent {
+            session_id: thread_id,
+            forked_from_id: None,
+            thread_name: None,
+            model: "gpt-5.2".to_string(),
+            model_provider_id: "openai".to_string(),
+            service_tier: None,
+            approval_policy: AskForApproval::OnRequest,
+            approvals_reviewer: codex_protocol::config_types::ApprovalsReviewer::User,
+            sandbox_policy: SandboxPolicy::new_workspace_write_policy(),
+            cwd: test_path_buf("/tmp").abs(),
+            reasoning_effort: Some(ReasoningEffortConfig::Medium),
+            history_log_id: 1,
+            history_entry_count: 0,
+            initial_messages: None,
+            network_proxy: None,
+            rollout_path: None,
+        }),
+    });
+    let _ = drain_insert_history(&mut rx);
+
+    chat.handle_codex_event(Event {
+        id: "session-model-updated".into(),
+        msg: EventMsg::SessionModelUpdated(codex_protocol::protocol::SessionModelUpdatedEvent {
+            previous_model: "gpt-5.2".to_string(),
+            model: "gpt-5.4-mini".to_string(),
+            previous_reasoning_effort: Some(ReasoningEffortConfig::Medium),
+            reasoning_effort: Some(ReasoningEffortConfig::Low),
+            source: codex_protocol::protocol::SessionModelUpdateSource::Tool,
+            current_turn_keeps_previous_model_and_reasoning: false,
+        }),
+    });
+
+    assert_eq!(chat.current_model(), "gpt-5.4-mini");
+    assert_eq!(
+        chat.current_reasoning_effort(),
+        Some(ReasoningEffortConfig::Low)
+    );
+    let cells = drain_insert_history(&mut rx);
+    assert_eq!(cells.len(), 1);
+    let rendered = lines_to_single_string(&cells[0]);
+    assert!(rendered.contains("Session model changed from gpt-5.2 medium to gpt-5.4-mini low."));
+}
+
+#[tokio::test]
 async fn live_app_server_user_message_item_completed_does_not_duplicate_rendered_prompt() {
     let (mut chat, mut rx, mut op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
     chat.thread_id = Some(ThreadId::new());
@@ -649,6 +699,61 @@ async fn live_app_server_thread_name_update_shows_resume_hint() {
     let rendered = lines_to_single_string(&cells[0]);
     assert!(rendered.contains("Thread renamed to review-fix"));
     assert!(rendered.contains("codex resume review-fix"));
+}
+
+#[tokio::test]
+async fn live_session_model_updates_refresh_model_state_and_show_carry_forward_notice() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    let thread_id = ThreadId::new();
+    chat.thread_id = Some(thread_id);
+    chat.handle_codex_event(Event {
+        id: "session-configured".into(),
+        msg: EventMsg::SessionConfigured(codex_protocol::protocol::SessionConfiguredEvent {
+            session_id: thread_id,
+            forked_from_id: None,
+            thread_name: None,
+            model: "gpt-5.2".to_string(),
+            model_provider_id: "openai".to_string(),
+            service_tier: None,
+            approval_policy: AskForApproval::OnRequest,
+            approvals_reviewer: codex_protocol::config_types::ApprovalsReviewer::User,
+            sandbox_policy: SandboxPolicy::new_workspace_write_policy(),
+            cwd: test_path_buf("/tmp").abs(),
+            reasoning_effort: Some(ReasoningEffortConfig::Medium),
+            history_log_id: 1,
+            history_entry_count: 0,
+            initial_messages: None,
+            network_proxy: None,
+            rollout_path: None,
+        }),
+    });
+    let _ = drain_insert_history(&mut rx);
+
+    chat.handle_server_notification(
+        ServerNotification::ThreadModelUpdated(
+            codex_app_server_protocol::ThreadModelUpdatedNotification {
+                thread_id: thread_id.to_string(),
+                previous_model: "gpt-5.2".to_string(),
+                model: "gpt-5.4".to_string(),
+                previous_reasoning_effort: Some(ReasoningEffortConfig::Medium),
+                reasoning_effort: Some(ReasoningEffortConfig::High),
+                source: codex_app_server_protocol::SessionModelUpdateSource::Tool,
+                current_turn_keeps_previous_model_and_reasoning: true,
+            },
+        ),
+        /*replay_kind*/ None,
+    );
+
+    assert_eq!(chat.current_model(), "gpt-5.4");
+    assert_eq!(
+        chat.current_reasoning_effort(),
+        Some(ReasoningEffortConfig::High)
+    );
+    let cells = drain_insert_history(&mut rx);
+    assert_eq!(cells.len(), 1);
+    let rendered = lines_to_single_string(&cells[0]);
+    assert!(rendered.contains("Session model changed from gpt-5.2 medium to gpt-5.4 high."));
+    assert!(rendered.contains("The current turn keeps the previous model and reasoning"));
 }
 
 #[tokio::test]

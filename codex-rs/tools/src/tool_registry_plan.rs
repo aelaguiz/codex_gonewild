@@ -29,6 +29,7 @@ use crate::create_image_generation_tool;
 use crate::create_js_repl_reset_tool;
 use crate::create_js_repl_tool;
 use crate::create_list_agents_tool;
+use crate::create_list_available_models_tool;
 use crate::create_list_dir_tool;
 use crate::create_list_mcp_resource_templates_tool;
 use crate::create_list_mcp_resources_tool;
@@ -49,6 +50,7 @@ use crate::create_test_sync_tool;
 use crate::create_tool_search_tool;
 use crate::create_tool_suggest_tool;
 use crate::create_update_plan_tool;
+use crate::create_update_session_model_tool;
 use crate::create_view_image_tool;
 use crate::create_wait_agent_tool_v1;
 use crate::create_wait_agent_tool_v2;
@@ -214,6 +216,23 @@ pub fn build_tool_registry_plan(
         config.code_mode_enabled,
     );
     plan.register_handler("update_plan", ToolHandlerKind::Plan);
+
+    plan.push_spec(
+        create_list_available_models_tool(),
+        /*supports_parallel_tool_calls*/ false,
+        config.code_mode_enabled,
+    );
+    plan.register_handler(
+        "list_available_models",
+        ToolHandlerKind::ListAvailableModels,
+    );
+
+    plan.push_spec(
+        create_update_session_model_tool(),
+        /*supports_parallel_tool_calls*/ false,
+        config.code_mode_enabled,
+    );
+    plan.register_handler("update_session_model", ToolHandlerKind::UpdateSessionModel);
 
     if config.has_environment && config.js_repl_enabled {
         plan.push_spec(

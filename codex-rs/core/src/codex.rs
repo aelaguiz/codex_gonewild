@@ -329,6 +329,8 @@ use codex_protocol::protocol::RequestUserInputEvent;
 use codex_protocol::protocol::ReviewDecision;
 use codex_protocol::protocol::SandboxPolicy;
 use codex_protocol::protocol::SessionConfiguredEvent;
+use codex_protocol::protocol::SessionModelUpdateSource;
+use codex_protocol::protocol::SessionModelUpdatedEvent;
 use codex_protocol::protocol::SessionNetworkProxyRuntime;
 use codex_protocol::protocol::SkillDependencies as ProtocolSkillDependencies;
 use codex_protocol::protocol::SkillErrorInfo;
@@ -364,6 +366,12 @@ pub struct Codex {
 }
 
 pub(crate) type SessionLoopTermination = Shared<BoxFuture<'static, ()>>;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SessionModelUpdateOutcome {
+    pub(crate) event: SessionModelUpdatedEvent,
+    pub(crate) changed: bool,
+}
 
 /// Wrapper returned by [`Codex::spawn`] containing the spawned [`Codex`],
 /// the submission id for the initial `ConfigureSession` request and the
@@ -755,6 +763,35 @@ impl Codex {
                 ..Default::default()
             })
             .await
+    }
+
+    pub(crate) async fn update_session_model(
+        &self,
+        event_id: String,
+        model: Option<String>,
+        reasoning_effort: Option<Option<ReasoningEffortConfig>>,
+        source: SessionModelUpdateSource,
+    ) -> ConstraintResult<SessionModelUpdatedEvent> {
+        let collaboration_mode = {
+            let state = self.session.state.lock().await;
+            state.session_configuration.collaboration_mode.with_updates(
+                model,
+                reasoning_effort,
+                /*developer_instructions*/ None,
+            )
+        };
+        let outcome = self
+            .session
+            .apply_settings_update_and_emit_session_model_event(
+                event_id,
+                SessionSettingsUpdate {
+                    collaboration_mode: Some(collaboration_mode),
+                    ..Default::default()
+                },
+                source,
+            )
+            .await?;
+        Ok(outcome.event)
     }
 
     pub(crate) async fn agent_status(&self) -> AgentStatus {
@@ -1419,6 +1456,61 @@ impl Session {
                 Err(err)
             }
         }
+    }
+
+    /// Applies a session settings update and emits a post-start model-change event
+    /// when the effective model or reasoning settings actually changed.
+    ///
+    /// This is the canonical post-start path for live session model updates.
+    /// Startup-only configuration continues to use `SessionConfiguredEvent`.
+    pub(crate) async fn apply_settings_update_and_emit_session_model_event(
+        &self,
+        event_id: String,
+        updates: SessionSettingsUpdate,
+        source: SessionModelUpdateSource,
+    ) -> ConstraintResult<SessionModelUpdateOutcome> {
+        let (previous_model, previous_reasoning_effort, model, reasoning_effort, changed) = {
+            let state = self.state.lock().await;
+            let current = &state.session_configuration;
+            let next = current.apply(&updates)?;
+            let previous_model = current.collaboration_mode.model().to_string();
+            let previous_reasoning_effort = current.collaboration_mode.reasoning_effort();
+            let model = next.collaboration_mode.model().to_string();
+            let reasoning_effort = next.collaboration_mode.reasoning_effort();
+            let changed = previous_model != model || previous_reasoning_effort != reasoning_effort;
+            (
+                previous_model,
+                previous_reasoning_effort,
+                model,
+                reasoning_effort,
+                changed,
+            )
+        };
+
+        self.update_settings(updates).await?;
+
+        let event = SessionModelUpdatedEvent {
+            previous_model,
+            model,
+            previous_reasoning_effort,
+            reasoning_effort,
+            source,
+            current_turn_keeps_previous_model_and_reasoning: self
+                .active_turn
+                .lock()
+                .await
+                .is_some(),
+        };
+
+        if changed {
+            self.send_event_raw(Event {
+                id: event_id,
+                msg: EventMsg::SessionModelUpdated(event.clone()),
+            })
+            .await;
+        }
+
+        Ok(SessionModelUpdateOutcome { event, changed })
     }
 
     pub(crate) async fn set_session_startup_prewarm(

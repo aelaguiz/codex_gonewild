@@ -2250,6 +2250,14 @@
       ],
       "type": "object"
     },
+    "SessionModelUpdateSource": {
+      "enum": [
+        "manual",
+        "tool",
+        "app_server"
+      ],
+      "type": "string"
+    },
     "SessionSource": {
       "oneOf": [
         {
@@ -3265,6 +3273,53 @@
           "type": "object"
         }
       ]
+    },
+    "ThreadModelUpdatedNotification": {
+      "properties": {
+        "currentTurnKeepsPreviousModelAndReasoning": {
+          "type": "boolean"
+        },
+        "model": {
+          "type": "string"
+        },
+        "previousModel": {
+          "type": "string"
+        },
+        "previousReasoningEffort": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ReasoningEffort"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "reasoningEffort": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ReasoningEffort"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "source": {
+          "$ref": "#/definitions/SessionModelUpdateSource"
+        },
+        "threadId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "currentTurnKeepsPreviousModelAndReasoning",
+        "model",
+        "previousModel",
+        "source",
+        "threadId"
+      ],
+      "type": "object"
     },
     "ThreadNameUpdatedNotification": {
       "properties": {
@@ -4864,6 +4919,26 @@
         "params"
       ],
       "title": "Thread/compactedNotification",
+      "type": "object"
+    },
+    {
+      "properties": {
+        "method": {
+          "enum": [
+            "thread/model/updated"
+          ],
+          "title": "Thread/model/updatedNotificationMethod",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/definitions/ThreadModelUpdatedNotification"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ],
+      "title": "Thread/model/updatedNotification",
       "type": "object"
     },
     {

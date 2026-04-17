@@ -49,6 +49,7 @@ use codex_protocol::protocol::RealtimeVoicesList;
 use codex_protocol::protocol::ReviewDecision;
 use codex_protocol::protocol::ReviewRequest;
 use codex_protocol::protocol::RolloutItem;
+use codex_protocol::protocol::SessionModelUpdateSource;
 use codex_protocol::protocol::SkillErrorInfo;
 use codex_protocol::protocol::SkillsListEntry;
 use codex_protocol::protocol::ThreadMemoryMode;
@@ -97,7 +98,14 @@ pub async fn realtime_conversation_list_voices(sess: &Session, sub_id: String) {
 }
 
 pub async fn override_turn_context(sess: &Session, sub_id: String, updates: SessionSettingsUpdate) {
-    if let Err(err) = sess.update_settings(updates).await {
+    if let Err(err) = sess
+        .apply_settings_update_and_emit_session_model_event(
+            sub_id.clone(),
+            updates,
+            SessionModelUpdateSource::Manual,
+        )
+        .await
+    {
         sess.send_event_raw(Event {
             id: sub_id,
             msg: EventMsg::Error(ErrorEvent {
