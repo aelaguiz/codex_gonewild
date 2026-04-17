@@ -150,6 +150,8 @@ use codex_app_server_protocol::ThreadMemoryModeSetResponse;
 use codex_app_server_protocol::ThreadMetadataGitInfoUpdateParams;
 use codex_app_server_protocol::ThreadMetadataUpdateParams;
 use codex_app_server_protocol::ThreadMetadataUpdateResponse;
+use codex_app_server_protocol::ThreadModelSetParams;
+use codex_app_server_protocol::ThreadModelSetResponse;
 use codex_app_server_protocol::ThreadNameUpdatedNotification;
 use codex_app_server_protocol::ThreadReadParams;
 use codex_app_server_protocol::ThreadReadResponse;
@@ -307,6 +309,7 @@ use codex_protocol::protocol::ReviewTarget as CoreReviewTarget;
 use codex_protocol::protocol::RolloutItem;
 use codex_protocol::protocol::SessionConfiguredEvent;
 use codex_protocol::protocol::SessionMetaLine;
+use codex_protocol::protocol::SessionModelUpdateSource;
 use codex_protocol::protocol::ThreadNameUpdatedEvent;
 use codex_protocol::protocol::USER_MESSAGE_BEGIN;
 use codex_protocol::protocol::W3cTraceContext;
@@ -944,6 +947,10 @@ impl CodexMessageProcessor {
             }
             ClientRequest::ThreadRead { request_id, params } => {
                 self.thread_read(to_connection_request_id(request_id), params)
+                    .await;
+            }
+            ClientRequest::ThreadModelSet { request_id, params } => {
+                self.thread_model_set(to_connection_request_id(request_id), params)
                     .await;
             }
             ClientRequest::ThreadShellCommand { request_id, params } => {
@@ -3923,6 +3930,78 @@ impl CodexMessageProcessor {
         );
         let response = ThreadReadResponse { thread };
         self.outgoing.send_response(request_id, response).await;
+    }
+
+    async fn thread_model_set(
+        &self,
+        request_id: ConnectionRequestId,
+        params: ThreadModelSetParams,
+    ) {
+        let ThreadModelSetParams {
+            thread_id,
+            model,
+            reasoning_effort,
+        } = params;
+
+        if model.is_none() && reasoning_effort.is_none() {
+            self.send_invalid_request_error(
+                request_id,
+                "thread/model/set requires at least one of model or reasoningEffort".to_string(),
+            )
+            .await;
+            return;
+        }
+
+        let thread_id = match ThreadId::from_string(&thread_id) {
+            Ok(id) => id,
+            Err(err) => {
+                self.send_invalid_request_error(request_id, format!("invalid thread id: {err}"))
+                    .await;
+                return;
+            }
+        };
+
+        let thread = match self.thread_manager.get_thread(thread_id).await {
+            Ok(thread) => thread,
+            Err(_) => {
+                self.send_invalid_request_error(
+                    request_id,
+                    format!("thread is not active: {thread_id}"),
+                )
+                .await;
+                return;
+            }
+        };
+
+        let event = match thread
+            .update_session_model(
+                request_id.request_id.to_string(),
+                model,
+                reasoning_effort,
+                SessionModelUpdateSource::AppServer,
+            )
+            .await
+        {
+            Ok(event) => event,
+            Err(err) => {
+                self.send_invalid_request_error(request_id, err.to_string())
+                    .await;
+                return;
+            }
+        };
+
+        self.outgoing
+            .send_response(
+                request_id,
+                ThreadModelSetResponse {
+                    thread_id: thread_id.to_string(),
+                    model: event.model,
+                    reasoning_effort: event.reasoning_effort,
+                    current_turn_keeps_previous_model_and_reasoning: event
+                        .current_turn_keeps_previous_model_and_reasoning,
+                },
+            )
+            .await;
     }
 
     pub(crate) fn thread_created_receiver(&self) -> broadcast::Receiver<ThreadId> {

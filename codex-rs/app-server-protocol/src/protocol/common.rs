@@ -327,6 +327,10 @@ client_request_definitions! {
         params: v2::ThreadReadParams,
         response: v2::ThreadReadResponse,
     },
+    ThreadModelSet => "thread/model/set" {
+        params: v2::ThreadModelSetParams,
+        response: v2::ThreadModelSetResponse,
+    },
     /// Append raw Responses API items to the thread history without starting a user turn.
     ThreadInjectItems => "thread/inject_items" {
         params: v2::ThreadInjectItemsParams,
@@ -1023,6 +1027,7 @@ server_notification_definitions! {
     ReasoningTextDelta => "item/reasoning/textDelta" (v2::ReasoningTextDeltaNotification),
     /// Deprecated: Use `ContextCompaction` item type instead.
     ContextCompacted => "thread/compacted" (v2::ContextCompactedNotification),
+    ThreadModelUpdated => "thread/model/updated" (v2::ThreadModelUpdatedNotification),
     ModelRerouted => "model/rerouted" (v2::ModelReroutedNotification),
     DeprecationNotice => "deprecationNotice" (v2::DeprecationNoticeNotification),
     ConfigWarning => "configWarning" (v2::ConfigWarningNotification),

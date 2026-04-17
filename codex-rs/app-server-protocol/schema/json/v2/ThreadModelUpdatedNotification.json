@@ -1,0 +1,71 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "definitions": {
+    "ReasoningEffort": {
+      "description": "See https://platform.openai.com/docs/guides/reasoning?api-mode=responses#get-started-with-reasoning",
+      "enum": [
+        "none",
+        "minimal",
+        "low",
+        "medium",
+        "high",
+        "xhigh"
+      ],
+      "type": "string"
+    },
+    "SessionModelUpdateSource": {
+      "enum": [
+        "manual",
+        "tool",
+        "app_server"
+      ],
+      "type": "string"
+    }
+  },
+  "properties": {
+    "currentTurnKeepsPreviousModelAndReasoning": {
+      "type": "boolean"
+    },
+    "model": {
+      "type": "string"
+    },
+    "previousModel": {
+      "type": "string"
+    },
+    "previousReasoningEffort": {
+      "anyOf": [
+        {
+          "$ref": "#/definitions/ReasoningEffort"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "reasoningEffort": {
+      "anyOf": [
+        {
+          "$ref": "#/definitions/ReasoningEffort"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "source": {
+      "$ref": "#/definitions/SessionModelUpdateSource"
+    },
+    "threadId": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "currentTurnKeepsPreviousModelAndReasoning",
+    "model",
+    "previousModel",
+    "source",
+    "threadId"
+  ],
+  "title": "ThreadModelUpdatedNotification",
+  "type": "object"
+}

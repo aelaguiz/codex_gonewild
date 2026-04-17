@@ -18,6 +18,8 @@ use codex_protocol::protocol::AskForApproval;
 use codex_protocol::protocol::Event;
 use codex_protocol::protocol::Op;
 use codex_protocol::protocol::SandboxPolicy;
+use codex_protocol::protocol::SessionModelUpdateSource;
+use codex_protocol::protocol::SessionModelUpdatedEvent;
 use codex_protocol::protocol::SessionSource;
 use codex_protocol::protocol::Submission;
 use codex_protocol::protocol::ThreadMemoryMode;
@@ -121,6 +123,18 @@ impl CodexThread {
     ) -> ConstraintResult<()> {
         self.codex
             .set_app_server_client_info(app_server_client_name, app_server_client_version)
+            .await
+    }
+
+    pub async fn update_session_model(
+        &self,
+        event_id: String,
+        model: Option<String>,
+        reasoning_effort: Option<Option<ReasoningEffort>>,
+        source: SessionModelUpdateSource,
+    ) -> ConstraintResult<SessionModelUpdatedEvent> {
+        self.codex
+            .update_session_model(event_id, model, reasoning_effort, source)
             .await
     }
 

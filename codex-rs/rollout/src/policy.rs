@@ -98,6 +98,7 @@ fn event_msg_persistence_mode(ev: &EventMsg) -> Option<EventPersistenceMode> {
         | EventMsg::AgentReasoningRawContent(_)
         | EventMsg::TokenCount(_)
         | EventMsg::ThreadNameUpdated(_)
+        | EventMsg::SessionModelUpdated(_)
         | EventMsg::ContextCompacted(_)
         | EventMsg::EnteredReviewMode(_)
         | EventMsg::ExitedReviewMode(_)

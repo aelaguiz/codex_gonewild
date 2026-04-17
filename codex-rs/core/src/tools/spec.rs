@@ -80,8 +80,10 @@ pub(crate) fn build_specs_with_discoverable_tools(
     use crate::tools::handlers::CodeModeExecuteHandler;
     use crate::tools::handlers::CodeModeWaitHandler;
     use crate::tools::handlers::DynamicToolHandler;
+    use crate::tools::handlers::GetCurrentSessionModelHandler;
     use crate::tools::handlers::JsReplHandler;
     use crate::tools::handlers::JsReplResetHandler;
+    use crate::tools::handlers::ListAvailableModelsHandler;
     use crate::tools::handlers::ListDirHandler;
     use crate::tools::handlers::McpHandler;
     use crate::tools::handlers::McpResourceHandler;
@@ -95,6 +97,7 @@ pub(crate) fn build_specs_with_discoverable_tools(
     use crate::tools::handlers::ToolSuggestHandler;
     use crate::tools::handlers::UnavailableToolHandler;
     use crate::tools::handlers::UnifiedExecHandler;
+    use crate::tools::handlers::UpdateSessionModelHandler;
     use crate::tools::handlers::ViewImageHandler;
     use crate::tools::handlers::multi_agents::CloseAgentHandler;
     use crate::tools::handlers::multi_agents::ResumeAgentHandler;
@@ -212,6 +215,12 @@ pub(crate) fn build_specs_with_discoverable_tools(
             ToolHandlerKind::JsReplReset => {
                 builder.register_handler(handler.name, js_repl_reset_handler.clone());
             }
+            ToolHandlerKind::GetCurrentSessionModel => {
+                builder.register_handler(handler.name, Arc::new(GetCurrentSessionModelHandler));
+            }
+            ToolHandlerKind::ListAvailableModels => {
+                builder.register_handler(handler.name, Arc::new(ListAvailableModelsHandler));
+            }
             ToolHandlerKind::ListAgentsV2 => {
                 builder.register_handler(handler.name, Arc::new(ListAgentsHandlerV2));
             }
@@ -269,6 +278,9 @@ pub(crate) fn build_specs_with_discoverable_tools(
             }
             ToolHandlerKind::ToolSuggest => {
                 builder.register_handler(handler.name, tool_suggest_handler.clone());
+            }
+            ToolHandlerKind::UpdateSessionModel => {
+                builder.register_handler(handler.name, Arc::new(UpdateSessionModelHandler));
             }
             ToolHandlerKind::UnifiedExec => {
                 builder.register_handler(handler.name, unified_exec_handler.clone());

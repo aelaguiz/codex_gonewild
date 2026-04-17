@@ -97,7 +97,10 @@ pub const DEFAULT_IN_PROCESS_CHANNEL_CAPACITY: usize = CHANNEL_CAPACITY;
 type PendingClientRequestResponse = std::result::Result<Result, JSONRPCErrorError>;
 
 fn server_notification_requires_delivery(notification: &ServerNotification) -> bool {
-    matches!(notification, ServerNotification::TurnCompleted(_))
+    matches!(
+        notification,
+        ServerNotification::TurnCompleted(_) | ServerNotification::ThreadModelUpdated(_)
+    )
 }
 
 /// Input needed to start an in-process app-server runtime.

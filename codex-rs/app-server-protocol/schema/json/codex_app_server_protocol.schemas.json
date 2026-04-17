@@ -579,6 +579,30 @@
           "type": "object"
         },
         {
+          "properties": {
+            "id": {
+              "$ref": "#/definitions/v2/RequestId"
+            },
+            "method": {
+              "enum": [
+                "thread/model/set"
+              ],
+              "title": "Thread/model/setRequestMethod",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/definitions/v2/ThreadModelSetParams"
+            }
+          },
+          "required": [
+            "id",
+            "method",
+            "params"
+          ],
+          "title": "Thread/model/setRequest",
+          "type": "object"
+        },
+        {
           "description": "Append raw Responses API items to the thread history without starting a user turn.",
           "properties": {
             "id": {
@@ -4237,6 +4261,26 @@
             "params"
           ],
           "title": "Thread/compactedNotification",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "enum": [
+                "thread/model/updated"
+              ],
+              "title": "Thread/model/updatedNotificationMethod",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/definitions/v2/ThreadModelUpdatedNotification"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "title": "Thread/model/updatedNotification",
           "type": "object"
         },
         {
@@ -12108,6 +12152,14 @@
         ],
         "type": "string"
       },
+      "SessionModelUpdateSource": {
+        "enum": [
+          "manual",
+          "tool",
+          "app_server"
+        ],
+        "type": "string"
+      },
       "SessionSource": {
         "oneOf": [
           {
@@ -13957,6 +14009,122 @@
           "thread"
         ],
         "title": "ThreadMetadataUpdateResponse",
+        "type": "object"
+      },
+      "ThreadModelSetParams": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "properties": {
+          "model": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "reasoningEffort": {
+            "anyOf": [
+              {
+                "anyOf": [
+                  {
+                    "$ref": "#/definitions/v2/ReasoningEffort"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "threadId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "threadId"
+        ],
+        "title": "ThreadModelSetParams",
+        "type": "object"
+      },
+      "ThreadModelSetResponse": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "properties": {
+          "currentTurnKeepsPreviousModelAndReasoning": {
+            "type": "boolean"
+          },
+          "model": {
+            "type": "string"
+          },
+          "reasoningEffort": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/v2/ReasoningEffort"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "threadId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "currentTurnKeepsPreviousModelAndReasoning",
+          "model",
+          "threadId"
+        ],
+        "title": "ThreadModelSetResponse",
+        "type": "object"
+      },
+      "ThreadModelUpdatedNotification": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "properties": {
+          "currentTurnKeepsPreviousModelAndReasoning": {
+            "type": "boolean"
+          },
+          "model": {
+            "type": "string"
+          },
+          "previousModel": {
+            "type": "string"
+          },
+          "previousReasoningEffort": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/v2/ReasoningEffort"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reasoningEffort": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/v2/ReasoningEffort"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "source": {
+            "$ref": "#/definitions/v2/SessionModelUpdateSource"
+          },
+          "threadId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "currentTurnKeepsPreviousModelAndReasoning",
+          "model",
+          "previousModel",
+          "source",
+          "threadId"
+        ],
+        "title": "ThreadModelUpdatedNotification",
         "type": "object"
       },
       "ThreadNameUpdatedNotification": {

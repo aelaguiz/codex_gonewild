@@ -34,7 +34,10 @@ pub fn rollout_item_affects_thread_metadata(item: &RolloutItem) -> bool {
     match item {
         RolloutItem::SessionMeta(_) | RolloutItem::TurnContext(_) => true,
         RolloutItem::EventMsg(
-            EventMsg::TokenCount(_) | EventMsg::UserMessage(_) | EventMsg::ThreadNameUpdated(_),
+            EventMsg::TokenCount(_)
+            | EventMsg::UserMessage(_)
+            | EventMsg::SessionModelUpdated(_)
+            | EventMsg::ThreadNameUpdated(_),
         ) => true,
         RolloutItem::EventMsg(_) | RolloutItem::ResponseItem(_) | RolloutItem::Compacted(_) => {
             false
@@ -104,6 +107,10 @@ fn apply_event_msg(metadata: &mut ThreadMetadata, event: &EventMsg) {
                 metadata.title = title.trim().to_string();
             }
         }
+        EventMsg::SessionModelUpdated(updated) => {
+            metadata.model = Some(updated.model.clone());
+            metadata.reasoning_effort = updated.reasoning_effort;
+        }
         _ => {}
     }
 }
@@ -158,6 +165,8 @@ mod tests {
     use codex_protocol::protocol::SandboxPolicy;
     use codex_protocol::protocol::SessionMeta;
     use codex_protocol::protocol::SessionMetaLine;
+    use codex_protocol::protocol::SessionModelUpdateSource;
+    use codex_protocol::protocol::SessionModelUpdatedEvent;
     use codex_protocol::protocol::SessionSource;
     use codex_protocol::protocol::ThreadNameUpdatedEvent;
     use codex_protocol::protocol::TurnContextItem;
@@ -223,6 +232,27 @@ mod tests {
             Some("actual user request")
         );
         assert_eq!(metadata.title, "saved-session");
+    }
+
+    #[test]
+    fn session_model_updated_sets_model_and_reasoning_effort() {
+        let mut metadata = metadata_for_test();
+        metadata.model = Some("gpt-5.2".to_string());
+        metadata.reasoning_effort = Some(ReasoningEffort::Medium);
+
+        let item = RolloutItem::EventMsg(EventMsg::SessionModelUpdated(SessionModelUpdatedEvent {
+            previous_model: "gpt-5.2".to_string(),
+            model: "gpt-5.4".to_string(),
+            previous_reasoning_effort: Some(ReasoningEffort::Medium),
+            reasoning_effort: Some(ReasoningEffort::High),
+            source: SessionModelUpdateSource::Tool,
+            current_turn_keeps_previous_model_and_reasoning: true,
+        }));
+
+        apply_rollout_item(&mut metadata, &item, "test-provider");
+
+        assert_eq!(metadata.model.as_deref(), Some("gpt-5.4"));
+        assert_eq!(metadata.reasoning_effort, Some(ReasoningEffort::High));
     }
 
     #[test]

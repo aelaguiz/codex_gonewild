@@ -2681,6 +2681,13 @@ impl App {
         let inferred_session = self
             .infer_session_for_thread_notification(thread_id, &notification)
             .await;
+        if let ServerNotification::ThreadModelUpdated(notification) = &notification
+            && self.primary_thread_id == Some(thread_id)
+            && let Some(session) = self.primary_session_configured.as_mut()
+        {
+            session.model = notification.model.clone();
+            session.reasoning_effort = notification.reasoning_effort;
+        }
         let (sender, store) = {
             let channel = self.ensure_thread_channel(thread_id);
             (channel.sender.clone(), Arc::clone(&channel.store))
@@ -2692,6 +2699,12 @@ impl App {
                 && let Some(session) = inferred_session
             {
                 guard.session = Some(session);
+            }
+            if let ServerNotification::ThreadModelUpdated(notification) = &notification
+                && let Some(session) = guard.session.as_mut()
+            {
+                session.model = notification.model.clone();
+                session.reasoning_effort = notification.reasoning_effort;
             }
             guard.push_notification(notification.clone());
             guard.active
@@ -9376,6 +9389,72 @@ guardian_approval = true
         let session = store.session.clone().expect("inferred session");
 
         assert_eq!(session.model, primary_session.model);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn thread_model_updated_notification_updates_stored_sessions() -> Result<()> {
+        let mut app = make_test_app().await;
+        let main_thread_id =
+            ThreadId::from_string("00000000-0000-0000-0000-000000000401").expect("valid thread");
+        let primary_session = ThreadSessionState {
+            model: "gpt-5.2".to_string(),
+            reasoning_effort: Some(ReasoningEffortConfig::Medium),
+            approval_policy: AskForApproval::OnRequest,
+            sandbox_policy: SandboxPolicy::new_workspace_write_policy(),
+            ..test_thread_session(main_thread_id, test_path_buf("/tmp/main"))
+        };
+
+        app.primary_thread_id = Some(main_thread_id);
+        app.active_thread_id = Some(main_thread_id);
+        app.primary_session_configured = Some(primary_session.clone());
+        app.thread_event_channels.insert(
+            main_thread_id,
+            ThreadEventChannel::new_with_session(/*capacity*/ 4, primary_session, Vec::new()),
+        );
+
+        app.enqueue_thread_notification(
+            main_thread_id,
+            ServerNotification::ThreadModelUpdated(
+                codex_app_server_protocol::ThreadModelUpdatedNotification {
+                    thread_id: main_thread_id.to_string(),
+                    previous_model: "gpt-5.2".to_string(),
+                    model: "gpt-5.4".to_string(),
+                    previous_reasoning_effort: Some(ReasoningEffortConfig::Medium),
+                    reasoning_effort: Some(ReasoningEffortConfig::High),
+                    source: codex_app_server_protocol::SessionModelUpdateSource::Tool,
+                    current_turn_keeps_previous_model_and_reasoning: true,
+                },
+            ),
+        )
+        .await?;
+
+        let primary_session = app
+            .primary_session_configured
+            .clone()
+            .expect("primary session configured");
+        assert_eq!(primary_session.model, "gpt-5.4");
+        assert_eq!(
+            primary_session.reasoning_effort,
+            Some(ReasoningEffortConfig::High)
+        );
+
+        let store = app
+            .thread_event_channels
+            .get(&main_thread_id)
+            .expect("main thread channel")
+            .store
+            .lock()
+            .await;
+        let stored_session = store.session.clone().expect("stored session");
+        drop(store);
+
+        assert_eq!(stored_session.model, "gpt-5.4");
+        assert_eq!(
+            stored_session.reasoning_effort,
+            Some(ReasoningEffortConfig::High)
+        );
 
         Ok(())
     }
